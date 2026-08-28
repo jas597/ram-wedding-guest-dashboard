@@ -46,6 +46,68 @@
     return span;
   }
 
+  /* Dialable form of a stored number, or null when it cannot be trusted.
+   * One record ("9.19943E+11") was mangled into scientific notation by the
+   * source export, so anything carrying a letter is left as plain text
+   * rather than turned into a link that would dial the wrong person. */
+  function telNumber(raw) {
+    if (!raw || /[a-z]/i.test(raw)) return null;
+    var digits = raw.replace(/\D/g, "");
+    if (digits.length < 7 || digits.length > 15) return null;
+    return "+" + digits;
+  }
+
+  /* Readable grouping. The untouched original stays in the title attribute. */
+  function prettyPhone(raw) {
+    var d = raw.replace(/\D/g, "");
+    if (d.length === 11 && d.charAt(0) === "1") {
+      return "+1 " + d.slice(1, 4) + " " + d.slice(4, 7) + " " + d.slice(7);
+    }
+    if (d.length === 10) {
+      return "(" + d.slice(0, 3) + ") " + d.slice(3, 6) + "-" + d.slice(6);
+    }
+    return "+" + d;
+  }
+
+  function action(className, label, href) {
+    var link = el("a", "chip " + className, label);
+    link.href = href;
+    link.rel = "nofollow";
+    return link;
+  }
+
+  function phoneFact(raw) {
+    var span = el("span", "contact");
+    span.appendChild(document.createTextNode("Phone "));
+
+    var tel = telNumber(raw);
+    if (!tel) {
+      var plain = el("strong", null, raw);
+      plain.title = "Stored as: " + raw;
+      span.appendChild(plain);
+      span.appendChild(el("span", "contact-note", "number incomplete in source"));
+      return span;
+    }
+
+    var number = el("a", "contact-link", prettyPhone(raw));
+    number.href = "tel:" + tel;
+    number.title = "Call " + raw;
+    span.appendChild(number);
+    span.appendChild(action("chip-call", "Call", "tel:" + tel));
+    span.appendChild(action("chip-sms", "SMS", "sms:" + tel));
+    return span;
+  }
+
+  function emailFact(raw) {
+    var span = el("span", "contact wrapable");
+    span.appendChild(document.createTextNode("Email "));
+    var link = el("a", "contact-link", raw);
+    link.href = "mailto:" + raw;
+    span.appendChild(link);
+    span.appendChild(action("chip-mail", "Email", "mailto:" + raw));
+    return span;
+  }
+
   /* Names mentioned in the duplicates list, so a party can be badged. */
   function buildFlaggedNames(duplicates) {
     var names = new Set();
@@ -121,8 +183,8 @@
     } else if (member.invited > 0) {
       facts.appendChild(fact("Invited", member.invited));
     }
-    if (state.showContacts && member.phone) facts.appendChild(fact("Phone", member.phone, true));
-    if (state.showContacts && member.email) facts.appendChild(fact("Email", member.email, true));
+    if (state.showContacts && member.phone) facts.appendChild(phoneFact(member.phone));
+    if (state.showContacts && member.email) facts.appendChild(emailFact(member.email));
     if (member.channel) facts.appendChild(fact("Channel", member.channel));
     if (member.group_name) facts.appendChild(fact("Group", member.group_name, true));
     if (member.guest_tags) facts.appendChild(fact("Tags", member.guest_tags, true));
