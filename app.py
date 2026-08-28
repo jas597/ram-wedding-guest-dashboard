@@ -20,10 +20,23 @@ from data_loader import build_summary, load_parties
 
 app = Flask(__name__)
 
-# In production Render supplies both of these. Locally we fall back to a
-# throwaway key and the documented default password.
+# In production Render supplies both of these.
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "wedding2026")
+
+# No password is ever hardcoded here: a default committed to the repository
+# would be a published password protecting real guests' contact details.
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD")
+if not DASHBOARD_PASSWORD:
+    if os.environ.get("RENDER"):
+        raise RuntimeError(
+            "DASHBOARD_PASSWORD is not set. Add it under Service -> Environment "
+            "in Render; refusing to start rather than leave the guest data "
+            "behind a guessable or absent password."
+        )
+    # Local development: mint a throwaway password and say what it is.
+    DASHBOARD_PASSWORD = secrets.token_urlsafe(9)
+    print("\n  DASHBOARD_PASSWORD is not set."
+          "\n  This run's local password is: %s\n" % DASHBOARD_PASSWORD, flush=True)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,

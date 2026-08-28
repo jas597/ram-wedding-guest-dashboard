@@ -86,21 +86,31 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open <http://127.0.0.1:5000> and sign in. Without `DASHBOARD_PASSWORD` set, the
-local default is `wedding2026`. To choose your own on Windows PowerShell:
+Open <http://127.0.0.1:5000> and sign in. No password is baked into the source,
+so if `DASHBOARD_PASSWORD` is unset the app prints a random one for that run:
+
+```
+  DASHBOARD_PASSWORD is not set.
+  This run's local password is: kJ2n-Qx7Vd
+```
+
+To choose your own on Windows PowerShell:
 
 ```bash
 $env:DASHBOARD_PASSWORD = "something-better"; python app.py
 ```
 
+In production the app **refuses to start** without `DASHBOARD_PASSWORD`, rather
+than falling back to anything guessable.
+
 ### Environment variables
 
 | Variable | Required | What it does |
 |---|---|---|
-| `DASHBOARD_PASSWORD` | in production | The shared sign-in password. Defaults to `wedding2026` locally only. |
+| `DASHBOARD_PASSWORD` | **yes in production** | The shared sign-in password. Never committed. Unset locally, a random one is generated and printed per run; unset on Render, the app refuses to boot. |
 | `SECRET_KEY` | in production | Signs the session cookie. A random one is generated per process if unset, which logs everyone out on restart. |
 | `PORT` | no | Port to bind. Defaults to 5000. |
-| `RENDER` | no | Set automatically by Render; makes the session cookie `Secure`. |
+| `RENDER` | no | Set automatically by Render; makes the session cookie `Secure` and enforces the password check above. |
 
 ---
 
