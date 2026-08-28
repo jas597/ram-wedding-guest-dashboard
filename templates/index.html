@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Ram's Wedding &middot; Guest List Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <p class="eyebrow">Ram's Wedding</p>
+      <h1>Guest List Dashboard</h1>
+    </div>
+    <div class="topbar-meta">
+      <span>{{ summary.total_rows }} records &middot; {{ summary.total_parties }} parties</span>
+      <a class="logout" href="{{ url_for('logout') }}">Sign out</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ---------------------------------------------------------- cards -->
+  <section class="cards" aria-label="Summary">
+    <article class="card card-total">
+      <p class="card-label">Total Guests</p>
+      <p class="card-value">{{ summary.total_people }}</p>
+      <p class="card-sub">people on the list</p>
+    </article>
+    <article class="card card-attending">
+      <p class="card-label">Attending</p>
+      <p class="card-value">{{ summary.attending }}</p>
+      <p class="card-sub">{{ summary.attending_adults }} adults &middot; {{ summary.attending_kids }} kids</p>
+    </article>
+    <article class="card card-regrets">
+      <p class="card-label">Regrets</p>
+      <p class="card-value">{{ summary.regrets }}</p>
+      <p class="card-sub">declined</p>
+    </article>
+    <article class="card card-pending">
+      <p class="card-label">Pending</p>
+      <p class="card-value">{{ summary.pending }}</p>
+      <p class="card-sub">no reply yet</p>
+    </article>
+    <article class="card card-minor">
+      <p class="card-label">Page Viewed</p>
+      <p class="card-value">{{ summary.page_viewed }}</p>
+      <p class="card-sub">opened the invite page</p>
+    </article>
+    <article class="card card-minor">
+      <p class="card-label">Text Opened</p>
+      <p class="card-value">{{ summary.text_opened }}</p>
+      <p class="card-sub">read the message only</p>
+    </article>
+    <article class="card card-minor">
+      <p class="card-label">Sent</p>
+      <p class="card-value">{{ summary.sent }}</p>
+      <p class="card-sub">delivered, not opened</p>
+    </article>
+    <article class="card card-bounced">
+      <p class="card-label">Bounced</p>
+      <p class="card-value">{{ summary.bounced }}</p>
+      <p class="card-sub">could not be delivered</p>
+    </article>
+  </section>
+
+  <!-- ----------------------------------------------------------- tabs -->
+  <nav class="tabs" id="tabs" aria-label="Filter by RSVP status"></nav>
+
+  <!-- --------------------------------------------------------- toolbar -->
+  <div class="toolbar" id="toolbar">
+    <div class="search-wrap">
+      <input type="search" id="search" placeholder="Search client, guest, phone or email&hellip;"
+             aria-label="Search guests" autocomplete="off">
+      <button type="button" id="clear-search" class="clear-btn" hidden aria-label="Clear search">&times;</button>
+    </div>
+    <label class="contact-toggle">
+      <input type="checkbox" id="show-contacts" checked>
+      <span>Show phone &amp; email</span>
+    </label>
+    <p class="result-count" id="result-count" role="status"></p>
+  </div>
+
+  <!-- --------------------------------------------------------- results -->
+  <section id="results" class="results" aria-live="polite"></section>
+
+  <!-- ------------------------------------------------------ duplicates -->
+  <section id="review" class="review" hidden></section>
+
+</main>
+
+<footer class="footer">
+  <p>
+    Attending <strong>{{ summary.attending }}</strong> is the verified sum of the Total Attending
+    column, cross-checked against Adults + Kids on all {{ summary.total_rows }} rows.
+    Guest&nbsp;2/3/4 rows are additional people inside a party, never separate clients.
+    Possible duplicates are shown as review warnings only &mdash; no record is removed automatically.
+  </p>
+</footer>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ram-wedding-dashboard
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+    healthCheckPath: /healthz
+    envVars:
+      # Set this yourself in the Render dashboard - it gates the whole site.
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # Render generates and stores this for you; it signs the session cookie.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.12.7"

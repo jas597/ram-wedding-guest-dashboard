@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Sign in &middot; Ram's Wedding Guest List</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <p class="login-eyebrow">Ram's Wedding</p>
+    <h1>Guest List Dashboard</h1>
+    <p class="login-note">
+      Internal tool. It holds guests' contact details and personal messages,
+      so it is not open to the public.
+    </p>
+
+    {% if error %}
+      <p class="login-error" role="alert">{{ error }}</p>
+    {% endif %}
+
+    <form method="post" autocomplete="off">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autofocus
+             autocomplete="current-password">
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
