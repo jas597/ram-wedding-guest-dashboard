@@ -181,6 +181,11 @@
       sub.textContent = summary.attending_adults + " adults · " +
                         summary.attending_kids + " kids";
     }
+    var totalSub = document.querySelector('[data-sub="total"]');
+    if (totalSub) {
+      totalSub.textContent = summary.confirmed_people + " confirmed · " +
+                             summary.estimated_people + " estimated";
+    }
   }
 
   function partyIsFlagged(party) {
@@ -244,7 +249,8 @@
     body.appendChild(nameRow);
 
     var facts = el("p", "facts");
-    facts.appendChild(fact("People", member.people_count));
+    facts.appendChild(fact(member.confirmed ? "People (confirmed)" : "People (est.)",
+                           member.people_count));
     if (member.status === "Attending") {
       facts.appendChild(fact("Adults", member.adults));
       facts.appendChild(fact("Kids", member.kids));
@@ -469,6 +475,19 @@
       head.appendChild(el("span", "move-row-label", member.guest_label));
       row.appendChild(head);
 
+      // everything the CSV currently says about this record, before any edit
+      var facts = el("dl", "move-facts");
+      [["Party", party.name],
+       ["Current status", member.status],
+       ["Invited", member.invited],
+       ["Total Attending", member.source_total_attending],
+       ["Adults", member.adults],
+       ["Kids", member.kids]].forEach(function (pair) {
+        facts.appendChild(el("dt", null, pair[0]));
+        facts.appendChild(el("dd", null, String(pair[1])));
+      });
+      row.appendChild(facts);
+
       var inputs = el("div", "move-inputs");
       function num(labelText, value, min) {
         var wrap = el("label", "move-num");
@@ -563,8 +582,12 @@
       head.appendChild(el("span", "group-flag", party.member_count + " in party"));
     }
 
-    head.appendChild(el("span", "headcount",
-      headline + (headline === 1 ? " person" : " people")));
+    var confirmedHere = activeStatus
+      ? activeStatus === ATTENDING
+      : party.members.every(function (m) { return m.confirmed; });
+    head.appendChild(el("span", "headcount" + (confirmedHere ? "" : " headcount-est"),
+      headline + (headline === 1 ? " person" : " people") +
+      (confirmedHere ? "" : " (est.)")));
 
     (activeStatus ? [activeStatus] : party.statuses).forEach(function (status) {
       head.appendChild(el("span", "badge b-" + slug(status), status));
@@ -698,9 +721,11 @@
                                  : party.total_people);
     }, 0);
 
+    var estimated = activeStatus && activeStatus !== ATTENDING;
     els.count.textContent = matches.length
       ? matches.length + (matches.length === 1 ? " party" : " parties") +
-        " · " + people + (people === 1 ? " person" : " people")
+        " · " + people + (people === 1 ? " person" : " people") +
+        (estimated ? " (estimated)" : "")
       : "";
 
     if (!matches.length) {

@@ -98,6 +98,12 @@ def _build_member(row: dict) -> dict:
         "invited": invited,
         "checked_in": _int(row.get("Total Checked In")),
         "people_count": _people_for(status, total_attending, invited),
+        # what the CSV itself said, kept for the audit trail and never overlaid
+        "source_people": _people_for(status, total_attending, invited),
+        "source_total_attending": total_attending,
+        # Attending is a real headcount the guest gave us. Every other status
+        # has Total Attending = 0, so its people count is inferred from Invited.
+        "confirmed": status == ATTENDING,
         "phone": phone,
         "email": email,
         "message": (row.get("Message") or "").strip(),
@@ -192,6 +198,7 @@ def apply_overlay(base_parties, overrides, categories):
             if not override:
                 continue
             member["status"] = override["status"]
+            member["confirmed"] = override["status"] == ATTENDING
             member["moved"] = override["status"] != member["source_status"]
             member["moved_at"] = override["updated_at"]
             if override["status"] == ATTENDING:
@@ -269,7 +276,12 @@ def build_summary(parties):
             loc = party["category"].get("family_location") or "Unspecified"
             by_family_location[loc] = by_family_location.get(loc, 0) + heads
 
+    confirmed = per_status[ATTENDING]["people"]
     return {
+        # 242 is a real headcount; the rest is inferred from Invited, so the
+        # UI can stop presenting the 347 as an equally solid number.
+        "confirmed_people": confirmed,
+        "estimated_people": sum(b["people"] for b in per_status.values()) - confirmed,
         "attending_by_category": by_category,
         "attending_by_friend_of": by_friend_of,
         "attending_by_friend_location": by_friend_location,

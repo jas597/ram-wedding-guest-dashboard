@@ -73,14 +73,20 @@ party_category = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+# The dashboard has one shared password, so there is no individual identity to
+# record. Naming that explicitly beats inventing a user we cannot know.
+CHANGED_BY = "shared-dashboard-user"
+
 change_log = Table(
     "change_log", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("kind", String(16), nullable=False),          # 'status' | 'category'
     Column("target_key", String(64), nullable=False),
     Column("subject", Text),                             # readable name
-    Column("from_value", Text),                          # JSON snapshot
-    Column("to_value", Text),                            # JSON snapshot
+    Column("original_value", Text),   # JSON: the very first value ever recorded
+    Column("from_value", Text),       # JSON: value immediately before this edit
+    Column("to_value", Text),         # JSON: value after this edit
+    Column("changed_by", String(64), nullable=False),
     Column("changed_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -161,21 +167,46 @@ def load_history(limit=200):
             "kind": r["kind"],
             "target_key": r["target_key"],
             "subject": r["subject"],
+            "original": json.loads(r["original_value"]) if r["original_value"] else None,
             "from": json.loads(r["from_value"]) if r["from_value"] else None,
             "to": json.loads(r["to_value"]) if r["to_value"] else None,
+            "changed_by": r["changed_by"],
             "changed_at": _iso(r["changed_at"]),
         })
     return out
 
 
 # ------------------------------------------------------------------- writes
-def _log(conn, kind, target_key, subject, from_value, to_value, when):
+def _original_value(conn, kind, target_key, fallback):
+    """The first value ever recorded for this target.
+
+    Every log row carries it, so the earliest row is authoritative and later
+    edits just copy it forward. That keeps "what did the CSV originally say"
+    answerable after any number of changes.
+    """
+    row = conn.execute(
+        select(change_log.c.original_value)
+        .where(change_log.c.kind == kind, change_log.c.target_key == target_key)
+        .order_by(change_log.c.id.asc()).limit(1)
+    ).first()
+    if row and row[0] is not None:
+        return json.loads(row[0])
+    return fallback
+
+
+def _log(conn, kind, target_key, subject, from_value, to_value, when,
+         original_fallback=None):
+    original = _original_value(conn, kind, target_key,
+                               original_fallback if original_fallback is not None
+                               else from_value)
     conn.execute(insert(change_log).values(
         kind=kind,
         target_key=target_key,
         subject=subject,
+        original_value=json.dumps(original, sort_keys=True),
         from_value=json.dumps(from_value, sort_keys=True),
         to_value=json.dumps(to_value, sort_keys=True),
+        changed_by=CHANGED_BY,
         changed_at=when,
     ))
 
@@ -267,7 +298,10 @@ def move_records(records, to_status, subject):
                   "people": payload["total_attending"],
                   "adults": payload["adults"],
                   "kids": payload["kids"]},
-                 when)
+                 when,
+                 # the CSV's own status, so "original" survives repeated moves
+                 original_fallback={"status": rec.get("original_status"),
+                                    "people": rec.get("original_people")})
             written.append(key)
 
     return {"moved": written, "changed_at": _iso(when)}

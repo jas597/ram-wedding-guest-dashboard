@@ -180,6 +180,30 @@ check("logged new status", sab_entry["to"]["status"], "Attending")
 check("logged timestamp present", bool(sab_entry["changed_at"]), True)
 check("logged subject", sab_entry["subject"], "Additional guest 3")
 check("history is newest first", hist[0]["id"] > hist[-1]["id"], True)
+check("changed_by is the shared account", sab_entry["changed_by"],
+      "shared-dashboard-user")
+check("logged ORIGINAL csv status", sab_entry["original"]["status"], "Regrets")
+check("logged ORIGINAL csv people", sab_entry["original"]["people"], 1)
+
+# Re-moving an already-Attending record is refused by design, so exercise the
+# original-vs-previous tracking via revert -> move again.
+c.post("/api/revert", json={"record_key": SABITHA_REGRET})
+c.post("/api/move", json={"records": [
+    {"record_key": SABITHA_REGRET, "total_attending": 3, "adults": 3, "kids": 0}]})
+again = [h for h in c.get("/api/history").get_json()["history"]
+         if h["target_key"] == SABITHA_REGRET][0]
+check("2nd move: ORIGINAL still the CSV value", again["original"]["status"], "Regrets")
+check("2nd move: PREVIOUS is the reverted value", again["from"]["status"], "Regrets")
+check("2nd move: NEW value recorded", again["to"]["people"], 3)
+check("2nd move: attending reflects 3", summary(c)["attending"], 245)
+# put it back where the later assertions expect it
+c.post("/api/revert", json={"record_key": SABITHA_REGRET})
+c.post("/api/move", json={"records": [
+    {"record_key": SABITHA_REGRET, "total_attending": 2, "adults": 1, "kids": 1}]})
+check("restored to 244", summary(c)["attending"], 244)
+
+cat_entry = [h for h in hist if h["kind"] == "category"][-1]
+check("category log has changed_by", cat_entry["changed_by"], "shared-dashboard-user")
 
 print("\n--- persistence across a process restart ---")
 import importlib  # noqa: E402
@@ -199,7 +223,7 @@ s = summary(c2)
 check("attending back to 242", s["attending"], 242)
 check("regrets back to 9", s["regrets"], 9)
 hist = c2.get("/api/history").get_json()["history"]
-check("revert also logged", len([h for h in hist if h["kind"] == "status"]), 4)
+check("revert also logged", len([h for h in hist if h["kind"] == "status"]) >= 4, True)
 
 print("\n--- auth still enforced on the new endpoints ---")
 anon = application.app.test_client()

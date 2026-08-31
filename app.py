@@ -227,6 +227,10 @@ def api_move():
             "name": member["full_name"],
             "from_status": member["status"],
             "from_people": member["people_count"],
+            # the CSV's own values, so the audit keeps "original" distinct from
+            # "previous" however many times this record is moved
+            "original_status": member["source_status"],
+            "original_people": member["source_people"],
             "total_attending": total,
             "adults": adults,
             "kids": kids,

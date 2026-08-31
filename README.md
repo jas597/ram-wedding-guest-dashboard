@@ -185,6 +185,19 @@ already Attending. Her attending members cannot be touched by that action.
 | `/api/revert` | POST | Drop an override, restoring the CSV status |
 | `/api/history` | GET | Audit trail, newest first |
 
+### Confirmed vs estimated
+
+Only **Attending** is a confirmed headcount -- those guests told us how many are
+coming. Every other status has `Total Attending = 0` in the source, so its
+people figure is **estimated from `Invited`** (falling back to 1 where `Invited`
+is 0 too). The UI says so in three places: a legend under the summary cards, a
+per-card `Confirmed headcount` / `Estimated from Invited` flag, and an `(est.)`
+marker on individual people counts.
+
+The overall 347 therefore mixes 242 confirmed with 105 estimated and should be
+read as an upper bound, not a confirmed figure. The Total Guests card spells the
+split out rather than presenting one number as if it were solid.
+
 ## Tests
 
 ```bash
@@ -193,8 +206,23 @@ python test_overlay.py
 
 Covers the audited baseline (347 / 242 / 9 / 96 / 152 / 179), category counting
 by headcount, the mixed-status guard, headcount arithmetic in both directions,
-the audit trail, persistence across a restart, revert, and auth on every new
-endpoint. Uses a throwaway SQLite file; your real database is untouched.
+the audit trail (original vs previous vs new, `changed_by`, timestamp),
+persistence across a restart, revert, and auth on every new endpoint. Uses a
+throwaway SQLite file; your real database is untouched.
+
+```bash
+python test_workers.py
+```
+
+Starts **two real Flask processes against one shared database** and writes
+through each while reading from the other, which is what `gunicorn --workers 2`
+does in production. This is the check that would fail if the merged overlay were
+ever cached in a module global.
+
+It uses a shared SQLite file rather than PostgreSQL, because neither Docker nor
+a Postgres server is available on the development machine. Same code path -- one
+engine per process, overlay read per request -- so it proves the cross-process
+design, but it does not exercise Postgres-specific behaviour under load.
 
 ---
 
