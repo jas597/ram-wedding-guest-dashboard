@@ -233,6 +233,24 @@ back to the label. Uncategorised parties show an italic *Uncategorised* label an
 a **Categorise** button instead. This keeps a screen of guests scannable by
 colour and label rather than a wall of select boxes.
 
+### Mobile
+
+Below 720px the layout becomes a single column and **never scrolls sideways**.
+Category cards, sub-group tiles and guest cards are one per row at full width;
+filter chips wrap onto as many lines as they need; the breadcrumb wraps and
+"Show all attending" drops to its own full-width row; selects and buttons are
+100% of their card; dialogs sit flush with 12px gutters and stack their actions.
+
+Audited at 375px and 320px across every tab and state -- All, the Attending
+overview at all three levels with edit drawers open, the full list with its chip
+bar, Regrets, Sent, Review, both dialogs and the sign-in page. In each,
+`document.documentElement.scrollWidth === clientWidth`, with no element
+extending past the viewport and no inner `overflow-x` scroller.
+
+The eight RSVP status tiles at the very top stay two per row on a phone: they
+are small numeric tiles, they fit without overflow, and stacking all eight would
+put roughly 600px of scrolling before the tabs.
+
 ### Undoing a manual move
 
 An Attending record that was moved there manually carries a

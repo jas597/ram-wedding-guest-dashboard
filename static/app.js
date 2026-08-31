@@ -306,7 +306,10 @@
   }
 
   function renderCategoryBar() {
-    if (state.tab !== ATTENDING) {
+    // Only the full list uses these chips. In the Overview the drill-down is
+    // the filter, and showing both meant two competing mechanisms with the
+    // chips silently doing nothing.
+    if (state.tab !== ATTENDING || state.view !== "list") {
       els.categoryBar.hidden = true;
       return;
     }
@@ -776,6 +779,7 @@
       state.view = "list";
       saveView("list");
       renderViewSwitch();
+      renderCategoryBar();
       render();
     });
     bar.appendChild(showAll);
@@ -1335,6 +1339,7 @@
       state.view = btn.getAttribute("data-view");
       saveView(state.view);
       renderViewSwitch();
+      renderCategoryBar();
       render();
     });
   });
