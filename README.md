@@ -178,15 +178,27 @@ already Attending. Her attending members cannot be touched by that action.
 
 ### Two ways to view Attending
 
-A `Pipeline View | List View` toggle sits above the Attending list; the choice is
+An `Overview | Full List` toggle sits above the Attending list; the choice is
 remembered in `localStorage`.
 
-**Pipeline** shows five colour-coded buckets -- Family (gold), Friends (blue),
-Musicians (purple), Other (teal), Uncategorised (grey) -- each with its party
-count and **headcount in people**, containing compact cards. Saving a category
-moves the card to its new bucket and updates both counts immediately, with no
-page reload. **List** is the full detail view with contacts, messages and
-filters.
+**Overview** is a three-level drill-down, built so the distribution of 242
+people reads in about five seconds without scrolling:
+
+* **Level 1** -- five colour-coded category cards (Family gold, Friends blue,
+  Musicians purple, Other teal, Uncategorised grey) showing people and parties,
+  with the important sub-group counts printed inside each card. **No guest cards
+  are rendered at this level.**
+* **Level 2** -- clicking a category reveals its sub-groups as tiles with their
+  own counts: whose friend (Jawa / Shanthi / Ram) and location for Friends,
+  location for Family.
+* **Level 3** -- the guest cards appear only once a category is chosen, and
+  narrow further as sub-groups are picked.
+
+A breadcrumb (`Attending > Friends > Ram > Outside NC`) walks back up a level at
+a time, and **Show all attending** jumps to the full list. Saving a category
+re-counts every level and relocates the party immediately, with no reload.
+
+**Full List** is the detailed view with contacts, messages and status filters.
 
 ### Undoing a manual move
 

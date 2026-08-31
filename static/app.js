@@ -18,8 +18,10 @@
     flaggedNames: new Set(),
     // category filters, only meaningful on the Attending tab
     filter: { category: "", friend_of: "", friend_location: "", family_location: "" },
-    // "pipeline" or "list", Attending tab only
-    view: "pipeline"
+    // "overview" (drill-down dashboard) or "list", Attending tab only
+    view: "overview",
+    // which category / sub-group the overview is drilled into
+    drill: { category: null, friendOf: null, location: null }
   };
 
   var els = {
@@ -33,7 +35,7 @@
     count: document.getElementById("result-count"),
     categoryBar: document.getElementById("category-bar"),
     viewSwitch: document.getElementById("view-switch"),
-    pipeline: document.getElementById("pipeline"),
+    overview: document.getElementById("overview"),
     modal: document.getElementById("modal"),
     modalTitle: document.getElementById("modal-title"),
     modalBody: document.getElementById("modal-body"),
@@ -226,6 +228,9 @@
       button.appendChild(el("span", "pill", String(tab.count)));
       button.addEventListener("click", function () {
         state.tab = tab.key;
+        if (tab.key !== ATTENDING) {
+          state.drill = { category: null, friendOf: null, location: null };
+        }
         buildTabs();
         renderCategoryBar();
         renderViewSwitch();
@@ -574,30 +579,35 @@
     if (event.key === "Escape" && !els.modal.hidden) closeModal();
   });
 
-  // ---------------------------------------------------------- pipeline
-  /* The five buckets, in the order they read best: the three real
-   * categories, then the catch-all, then whatever nobody has sorted yet. */
-  var BUCKETS = [
-    { key: "Family", label: "Family", cls: "bucket-family" },
-    { key: "Friend", label: "Friends", cls: "bucket-friends" },
-    { key: "Musician", label: "Musicians", cls: "bucket-musicians" },
-    { key: "Other", label: "Other", cls: "bucket-other" },
-    { key: null, label: "Uncategorised", cls: "bucket-none" }
+  // ------------------------------------------- attending overview (L1-L3)
+  /* The overview answers "how are the 242 distributed?" in one screen. Guest
+   * cards only appear once a category is chosen, so nothing here scrolls past
+   * a few hundred pixels until you ask it to. */
+  var CATEGORY_DEFS = [
+    { key: "Family", label: "Family", cls: "cat-family",
+      subKind: "family_location" },
+    { key: "Friend", label: "Friends", cls: "cat-friends",
+      subKind: "friend_of" },
+    { key: "Musician", label: "Musicians", cls: "cat-musicians", subKind: null },
+    { key: "Other", label: "Other", cls: "cat-other", subKind: null },
+    { key: "__none__", label: "Uncategorised", cls: "cat-none", subKind: null }
   ];
+
+  var UNSPECIFIED = "Unspecified";
 
   function loadView() {
     try {
       return window.localStorage.getItem("attendingView") === "list"
-        ? "list" : "pipeline";
+        ? "list" : "overview";
     } catch (e) {
-      return "pipeline";
+      return "overview";
     }
   }
 
   function saveView(view) {
     try {
       window.localStorage.setItem("attendingView", view);
-    } catch (e) { /* private mode, or storage blocked -- not worth failing over */ }
+    } catch (e) { /* private mode or storage blocked -- not worth failing over */ }
   }
 
   function renderViewSwitch() {
@@ -611,6 +621,168 @@
     });
   }
 
+  function catKeyOf(party) {
+    return (party.category || {}).category || "__none__";
+  }
+
+  function statsFor(list) {
+    return {
+      parties: list.length,
+      people: list.reduce(function (n, p) { return n + p.attending_people; }, 0)
+    };
+  }
+
+  function statLine(stats) {
+    return stats.people + (stats.people === 1 ? " person" : " people") + " · " +
+           stats.parties + (stats.parties === 1 ? " party" : " parties");
+  }
+
+  /* Group a list of parties by one category field, preserving vocab order. */
+  function groupBy(list, field, order) {
+    var buckets = {};
+    list.forEach(function (p) {
+      var value = (p.category || {})[field] || UNSPECIFIED;
+      (buckets[value] = buckets[value] || []).push(p);
+    });
+    var keys = (order || []).filter(function (k) { return buckets[k]; });
+    Object.keys(buckets).forEach(function (k) {
+      if (keys.indexOf(k) === -1) keys.push(k);
+    });
+    return keys.map(function (k) {
+      return { label: k, parties: buckets[k], stats: statsFor(buckets[k]) };
+    });
+  }
+
+  function attendingPool() {
+    var query = state.query.trim().toLowerCase();
+    return state.data.parties.filter(function (p) {
+      if (p.attending_people <= 0) return false;
+      return !query || p.search_blob.indexOf(query) !== -1;
+    });
+  }
+
+  function drillMatches(party) {
+    var cat = party.category || {};
+    var d = state.drill;
+    if (d.category === "__none__") {
+      if (cat.category) return false;
+    } else if (d.category && cat.category !== d.category) {
+      return false;
+    }
+    if (d.friendOf && (cat.friend_of || UNSPECIFIED) !== d.friendOf) return false;
+    if (d.location) {
+      var loc = d.category === "Family" ? cat.family_location : cat.friend_location;
+      if ((loc || UNSPECIFIED) !== d.location) return false;
+    }
+    return true;
+  }
+
+  function setDrill(category, friendOf, location) {
+    state.drill = { category: category, friendOf: friendOf, location: location };
+    render();
+  }
+
+  // ------------------------------------------------------------ level 1
+  function categoryCard(def, stats, members) {
+    var card = el("button", "cat-card " + def.cls);
+    card.type = "button";
+    if (state.drill.category === def.key) card.classList.add("is-open");
+    card.setAttribute("aria-pressed", String(state.drill.category === def.key));
+
+    card.appendChild(el("span", "cat-card-label", def.label));
+    card.appendChild(el("span", "cat-card-people", String(stats.people)));
+    card.appendChild(el("span", "cat-card-unit",
+      stats.people === 1 ? "person" : "people"));
+    card.appendChild(el("span", "cat-card-parties",
+      stats.parties + (stats.parties === 1 ? " party" : " parties")));
+
+    // the subcategory split, inline, so level 1 alone tells the story
+    if (def.subKind && stats.people) {
+      var order = def.subKind === "friend_of"
+        ? state.data.vocab.friend_of
+        : state.data.vocab.family_locations;
+      var subs = groupBy(members, def.subKind, order);
+      var list = el("span", "cat-card-subs");
+      subs.forEach(function (sub) {
+        var row = el("span", "cat-sub-row");
+        row.appendChild(el("span", "cat-sub-name", sub.label));
+        row.appendChild(el("span", "cat-sub-val", String(sub.stats.people)));
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    } else if (stats.people) {
+      card.appendChild(el("span", "cat-card-hint", "no sub-groups"));
+    }
+
+    card.addEventListener("click", function () {
+      setDrill(state.drill.category === def.key ? null : def.key, null, null);
+    });
+    return card;
+  }
+
+  // ------------------------------------------------------------ level 2
+  function subTile(label, stats, active, onClick) {
+    var tile = el("button", "sub-tile" + (active ? " is-active" : ""));
+    tile.type = "button";
+    tile.setAttribute("aria-pressed", String(active));
+    tile.appendChild(el("span", "sub-tile-name", label));
+    tile.appendChild(el("span", "sub-tile-stats", statLine(stats)));
+    tile.addEventListener("click", onClick);
+    return tile;
+  }
+
+  function subSection(title, tiles) {
+    var wrap = el("section", "sub-section");
+    wrap.appendChild(el("h4", "sub-section-title", title));
+    var row = el("div", "sub-row");
+    tiles.forEach(function (t) { row.appendChild(t); });
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  // -------------------------------------------------------- breadcrumb
+  function breadcrumb() {
+    var bar = el("nav", "crumbs");
+    bar.setAttribute("aria-label", "Breadcrumb");
+
+    function crumb(label, onClick, isLast) {
+      if (isLast) {
+        bar.appendChild(el("span", "crumb crumb-current", label));
+        return;
+      }
+      var btn = el("button", "crumb crumb-link", label);
+      btn.type = "button";
+      btn.addEventListener("click", onClick);
+      bar.appendChild(btn);
+      bar.appendChild(el("span", "crumb-sep", "›"));
+    }
+
+    var d = state.drill;
+    var def = CATEGORY_DEFS.filter(function (x) { return x.key === d.category; })[0];
+    var last = !d.friendOf && !d.location;
+
+    crumb("Attending", function () { setDrill(null, null, null); }, !d.category);
+    if (def) crumb(def.label, function () { setDrill(d.category, null, null); }, last);
+    if (d.friendOf) {
+      crumb(d.friendOf, function () { setDrill(d.category, d.friendOf, null); },
+            !d.location);
+    }
+    if (d.location) crumb(d.location, null, true);
+
+    var showAll = el("button", "btn btn-ghost btn-small crumbs-all",
+                     "Show all attending");
+    showAll.type = "button";
+    showAll.addEventListener("click", function () {
+      state.view = "list";
+      saveView("list");
+      renderViewSwitch();
+      render();
+    });
+    bar.appendChild(showAll);
+    return bar;
+  }
+
+  // ---------------------------------------------------- guest card bits
   /* Category plus its follow-up answers, as small chips. */
   function categoryChips(party) {
     var wrap = el("div", "cat-chips");
@@ -631,11 +803,9 @@
     return wrap;
   }
 
-  function bucketOf(party) {
-    return (party.category || {}).category || null;
-  }
-
-  function pipelineCard(party) {
+  /* Compact card used at level 3. The category editor lives in a drawer so a
+   * party can be re-categorised without leaving the drill-down. */
+  function guestCard(party) {
     var card = el("article", "pcard");
 
     var head = el("div", "pcard-head");
@@ -675,50 +845,104 @@
     return card;
   }
 
-  function renderPipeline() {
-    els.pipeline.textContent = "";
-    var query = state.query.trim().toLowerCase();
+  // ------------------------------------------------------------ level 3
+  function guestList(parties) {
+    var wrap = el("section", "drill-list");
+    var stats = statsFor(parties);
+    var head = el("div", "drill-head");
+    head.appendChild(el("h3", "drill-title", "Guests"));
+    head.appendChild(el("p", "drill-stats", statLine(stats)));
+    wrap.appendChild(head);
 
-    var attending = state.data.parties.filter(function (party) {
-      if (party.attending_people <= 0) return false;
-      if (!partyMatchesFilter(party)) return false;
-      return !query || party.search_blob.indexOf(query) !== -1;
+    if (!parties.length) {
+      wrap.appendChild(el("p", "bucket-empty", "No attending guests here."));
+      return wrap;
+    }
+    var grid = el("div", "drill-grid");
+    parties.forEach(function (p) { grid.appendChild(guestCard(p)); });
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  function renderOverview() {
+    els.overview.textContent = "";
+    var pool = attendingPool();
+    var d = state.drill;
+
+    // ---- level 1: always visible, always the whole picture
+    var total = statsFor(pool);
+    var header = el("div", "ov-head");
+    header.appendChild(el("h2", "ov-title", "Attending by category"));
+    header.appendChild(el("p", "ov-sub",
+      statLine(total) + " · counts are people, not cards. Pick a category to drill in."));
+    els.overview.appendChild(header);
+
+    var grid = el("div", "cat-grid");
+    CATEGORY_DEFS.forEach(function (def) {
+      var members = pool.filter(function (p) { return catKeyOf(p) === def.key; });
+      grid.appendChild(categoryCard(def, statsFor(members), members));
     });
+    els.overview.appendChild(grid);
 
-    var total = 0;
-    BUCKETS.forEach(function (bucket) {
-      var inBucket = attending.filter(function (p) {
-        return bucketOf(p) === bucket.key;
+    if (!d.category) {
+      var hint = el("p", "ov-hint",
+        "Choose a category above to see its sub-groups and guests. "
+        + "Nothing is loaded below until you do, so this stays a five-second read.");
+      els.overview.appendChild(hint);
+      els.count.textContent = statLine(total);
+      return;
+    }
+
+    els.overview.appendChild(breadcrumb());
+
+    // ---- level 2: sub-groups for the chosen category
+    var inCategory = pool.filter(function (p) { return catKeyOf(p) === d.category; });
+
+    if (d.category === "Friend") {
+      var whoTiles = groupBy(inCategory, "friend_of",
+                             state.data.vocab.friend_of).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label + "'s friends",
+                       g.stats, d.friendOf === g.label,
+                       function () {
+                         setDrill(d.category,
+                                  d.friendOf === g.label ? null : g.label, null);
+                       });
       });
-      var people = inBucket.reduce(function (n, p) {
-        return n + p.attending_people;
-      }, 0);
-      total += people;
+      if (whoTiles.length) els.overview.appendChild(subSection("Whose friend", whoTiles));
 
-      var column = el("section", "bucket " + bucket.cls);
+      var forLocation = d.friendOf
+        ? inCategory.filter(function (p) {
+            return ((p.category || {}).friend_of || UNSPECIFIED) === d.friendOf;
+          })
+        : inCategory;
+      var locTiles = groupBy(forLocation, "friend_location",
+                             state.data.vocab.friend_locations).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label,
+                       g.stats, d.location === g.label,
+                       function () {
+                         setDrill(d.category, d.friendOf,
+                                  d.location === g.label ? null : g.label);
+                       });
+      });
+      if (locTiles.length) els.overview.appendChild(subSection("Location", locTiles));
 
-      var header = el("header", "bucket-head");
-      header.appendChild(el("h3", "bucket-title", bucket.label));
-      header.appendChild(el("p", "bucket-stats",
-        inBucket.length + (inBucket.length === 1 ? " party" : " parties") +
-        " · " + people + (people === 1 ? " person" : " people")));
-      column.appendChild(header);
+    } else if (d.category === "Family") {
+      var famTiles = groupBy(inCategory, "family_location",
+                             state.data.vocab.family_locations).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label,
+                       g.stats, d.location === g.label,
+                       function () {
+                         setDrill(d.category, null,
+                                  d.location === g.label ? null : g.label);
+                       });
+      });
+      if (famTiles.length) els.overview.appendChild(subSection("Family location", famTiles));
+    }
 
-      var body = el("div", "bucket-body");
-      if (!inBucket.length) {
-        body.appendChild(el("p", "bucket-empty",
-          query || bucketOf ? "Nothing here." : "Nothing here."));
-      } else {
-        inBucket.forEach(function (p) { body.appendChild(pipelineCard(p)); });
-      }
-      column.appendChild(body);
-      els.pipeline.appendChild(column);
-    });
-
-    els.count.textContent = attending.length
-      ? attending.length + (attending.length === 1 ? " party" : " parties") +
-        " · " + total + (total === 1 ? " person" : " people")
-      : "No attending guests match.";
+    // ---- level 3: the guests themselves
+    var shown = pool.filter(drillMatches);
+    els.overview.appendChild(guestList(shown));
+    els.count.textContent = statLine(statsFor(shown));
   }
 
   // ------------------------------------------------- undo a manual move
@@ -1010,7 +1234,7 @@
   function render() {
     if (state.tab === REVIEW_TAB) {
       els.categoryBar.hidden = true;
-      els.pipeline.hidden = true;
+      els.overview.hidden = true;
       renderReview();
       return;
     }
@@ -1021,13 +1245,13 @@
 
     var activeStatus = state.tab === ALL_TAB ? null : state.tab;
 
-    if (activeStatus === ATTENDING && state.view === "pipeline") {
+    if (activeStatus === ATTENDING && state.view === "overview") {
       els.results.hidden = true;
-      els.pipeline.hidden = false;
-      renderPipeline();
+      els.overview.hidden = false;
+      renderOverview();
       return;
     }
-    els.pipeline.hidden = true;
+    els.overview.hidden = true;
     els.results.hidden = false;
     var query = state.query.trim().toLowerCase();
 
