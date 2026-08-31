@@ -46,7 +46,29 @@ def free_port():
         return s.getsockname()[1]
 
 
-PORT_A, PORT_B = free_port(), free_port()
+def start_worker(attempts=4):
+    """Spawn a worker, retrying on a fresh port if it fails to come up.
+
+    A port that free_port() just released can still be unusable for a moment on
+    Windows, especially right after another test has exited. Retrying on a new
+    port is more reliable than assuming the first choice binds.
+    """
+    last = None
+    for attempt in range(attempts):
+        port = free_port()
+        proc = spawn(port)
+        worker = Worker(port)
+        if worker.wait_ready(timeout=25):
+            return proc, worker
+        proc.terminate()
+        try:
+            last = proc.stdout.read()[-500:]
+        except Exception:
+            last = None
+        print("  worker on port %d did not start (attempt %d/%d)%s"
+              % (port, attempt + 1, attempts,
+                 "; output: " + last if last else ""))
+    raise SystemExit("could not start a worker after %d attempts" % attempts)
 
 SABITHA_REGRET = "a85314c233924a77"
 
@@ -119,13 +141,15 @@ class Worker:
             return json.loads(e.read().decode())
 
 
-procs = [spawn(PORT_A), spawn(PORT_B)]
+print("\n--- starting two worker processes on one shared database ---")
+proc_a, a = start_worker()
+proc_b, b = start_worker()
+procs = [proc_a, proc_b]
 try:
-    a, b = Worker(PORT_A), Worker(PORT_B)
-    print("\n--- starting two worker processes on one shared database ---")
     check("worker A up", a.wait_ready(), True)
     check("worker B up", b.wait_ready(), True)
-    check("processes are distinct", procs[0].pid != procs[1].pid, True)
+    check("processes are distinct", proc_a.pid != proc_b.pid, True)
+    check("workers on different ports", a.base != b.base, True)
     a.login()
     b.login()
 

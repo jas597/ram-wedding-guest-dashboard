@@ -39,6 +39,17 @@ if not DASHBOARD_PASSWORD:
     print("\n  DASHBOARD_PASSWORD is not set."
           "\n  This run's local password is: %s\n" % DASHBOARD_PASSWORD, flush=True)
 
+# Same reasoning for storage. Without DATABASE_URL the app falls back to SQLite
+# under instance/, which on Render sits on an ephemeral disk that is wiped on
+# every restart, redeploy and idle-sleep wake. Every saved category and status
+# move would disappear with no error anywhere. Refuse to start instead.
+if os.environ.get("RENDER") and not os.environ.get("DATABASE_URL"):
+    raise RuntimeError(
+        "DATABASE_URL is not set. Point it at the Neon PostgreSQL connection "
+        "string under Service -> Environment in Render; refusing to start "
+        "rather than write changes to a disk Render wipes on every restart."
+    )
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
