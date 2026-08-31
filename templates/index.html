@@ -16,7 +16,8 @@
       <h1>Guest List Dashboard</h1>
     </div>
     <div class="topbar-meta">
-      <span>{{ summary.total_rows }} records &middot; {{ summary.total_parties }} parties</span>
+      <span><strong data-metric="total_rows">{{ summary.total_rows }}</strong> records
+            &middot; <strong data-metric="total_parties">{{ summary.total_parties }}</strong> parties</span>
       <a class="logout" href="{{ url_for('logout') }}">Sign out</a>
     </div>
   </div>
@@ -28,48 +29,52 @@
   <section class="cards" aria-label="Summary">
     <article class="card card-total">
       <p class="card-label">Total Guests</p>
-      <p class="card-value">{{ summary.total_people }}</p>
+      <p class="card-value" data-metric="total_people">{{ summary.total_people }}</p>
       <p class="card-sub">people on the list</p>
     </article>
     <article class="card card-attending">
       <p class="card-label">Attending</p>
-      <p class="card-value">{{ summary.attending }}</p>
-      <p class="card-sub">{{ summary.attending_adults }} adults &middot; {{ summary.attending_kids }} kids</p>
+      <p class="card-value" data-metric="attending">{{ summary.attending }}</p>
+      <p class="card-sub" data-sub="attending">{{ summary.attending_adults }} adults &middot; {{ summary.attending_kids }} kids</p>
     </article>
     <article class="card card-regrets">
       <p class="card-label">Regrets</p>
-      <p class="card-value">{{ summary.regrets }}</p>
+      <p class="card-value" data-metric="regrets">{{ summary.regrets }}</p>
       <p class="card-sub">declined</p>
     </article>
     <article class="card card-pending">
       <p class="card-label">Pending</p>
-      <p class="card-value">{{ summary.pending }}</p>
+      <p class="card-value" data-metric="pending">{{ summary.pending }}</p>
       <p class="card-sub">no reply yet</p>
     </article>
     <article class="card card-minor">
       <p class="card-label">Page Viewed</p>
-      <p class="card-value">{{ summary.page_viewed }}</p>
+      <p class="card-value" data-metric="page_viewed">{{ summary.page_viewed }}</p>
       <p class="card-sub">opened the invite page</p>
     </article>
     <article class="card card-minor">
       <p class="card-label">Text Opened</p>
-      <p class="card-value">{{ summary.text_opened }}</p>
+      <p class="card-value" data-metric="text_opened">{{ summary.text_opened }}</p>
       <p class="card-sub">read the message only</p>
     </article>
     <article class="card card-minor">
       <p class="card-label">Sent</p>
-      <p class="card-value">{{ summary.sent }}</p>
+      <p class="card-value" data-metric="sent">{{ summary.sent }}</p>
       <p class="card-sub">delivered, not opened</p>
     </article>
     <article class="card card-bounced">
       <p class="card-label">Bounced</p>
-      <p class="card-value">{{ summary.bounced }}</p>
+      <p class="card-value" data-metric="bounced">{{ summary.bounced }}</p>
       <p class="card-sub">could not be delivered</p>
     </article>
   </section>
 
   <!-- ----------------------------------------------------------- tabs -->
   <nav class="tabs" id="tabs" aria-label="Filter by RSVP status"></nav>
+
+  <!-- ------------------------------------------- attending categories -->
+  <section id="category-bar" class="category-bar" hidden
+           aria-label="Attending guests by category"></section>
 
   <!-- --------------------------------------------------------- toolbar -->
   <div class="toolbar" id="toolbar">
@@ -92,6 +97,21 @@
   <section id="review" class="review" hidden></section>
 
 </main>
+
+<!-- confirmation dialog for RSVP moves -->
+<div id="modal" class="modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="modal-title">
+  <div class="modal-card">
+    <h2 id="modal-title">Move to Attending?</h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="modal-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="modal-confirm">Confirm move</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden role="status"></div>
 
 <footer class="footer">
   <p>
