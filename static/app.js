@@ -8,12 +8,16 @@
   var REVIEW_TAB = "__review__";
   var ALL_TAB = "__all__";
 
+  var ATTENDING = "Attending";
+
   var state = {
     data: null,
     tab: ALL_TAB,
     query: "",
     showContacts: true,
-    flaggedNames: new Set()
+    flaggedNames: new Set(),
+    // category filters, only meaningful on the Attending tab
+    filter: { category: "", friend_of: "", friend_location: "", family_location: "" }
   };
 
   var els = {
@@ -24,7 +28,13 @@
     search: document.getElementById("search"),
     clear: document.getElementById("clear-search"),
     contacts: document.getElementById("show-contacts"),
-    count: document.getElementById("result-count")
+    count: document.getElementById("result-count"),
+    categoryBar: document.getElementById("category-bar"),
+    modal: document.getElementById("modal"),
+    modalBody: document.getElementById("modal-body"),
+    modalCancel: document.getElementById("modal-cancel"),
+    modalConfirm: document.getElementById("modal-confirm"),
+    toast: document.getElementById("toast")
   };
 
   // ----------------------------------------------------------- helpers
@@ -120,6 +130,64 @@
     return names;
   }
 
+  function select(field, options, current, includeBlank) {
+    var sel = el("select");
+    sel.setAttribute("data-field", field);
+    if (includeBlank) sel.appendChild(el("option", null, includeBlank)).value = "";
+    options.forEach(function (opt) {
+      var node = el("option", null, opt);
+      node.value = opt;
+      if (opt === current) node.selected = true;
+      sel.appendChild(node);
+    });
+    if (!current) sel.value = "";
+    return sel;
+  }
+
+  function toast(message, isError) {
+    els.toast.textContent = message;
+    els.toast.className = "toast" + (isError ? " toast-error" : "");
+    els.toast.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { els.toast.hidden = true; }, 3200);
+  }
+
+  function post(path, payload) {
+    return fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (response) {
+      if (response.status === 401 || response.redirected) {
+        window.location.href = "/login";
+        throw new Error("signed out");
+      }
+      return response.json().then(function (body) {
+        if (!response.ok) throw new Error(body.error || ("HTTP " + response.status));
+        return body;
+      });
+    });
+  }
+
+  /* Repaint the server-rendered summary cards after a change. */
+  function paintSummary(summary) {
+    Object.keys(summary).forEach(function (metric) {
+      var node = document.querySelector('[data-metric="' + metric + '"]');
+      if (node) node.textContent = summary[metric];
+    });
+    var sub = document.querySelector('[data-sub="attending"]');
+    if (sub) {
+      sub.textContent = summary.attending_adults + " adults · " +
+                        summary.attending_kids + " kids";
+    }
+    var totalSub = document.querySelector('[data-sub="total"]');
+    if (totalSub) {
+      totalSub.textContent = summary.confirmed_people + " confirmed · " +
+                             summary.estimated_people + " estimated";
+    }
+  }
+
   function partyIsFlagged(party) {
     if (state.flaggedNames.has(party.name.trim().toLowerCase())) return true;
     return party.members.some(function (m) {
@@ -154,6 +222,7 @@
       button.addEventListener("click", function () {
         state.tab = tab.key;
         buildTabs();
+        renderCategoryBar();
         render();
       });
       els.tabs.appendChild(button);
@@ -173,10 +242,15 @@
     if (!isActive) {
       nameRow.appendChild(el("span", "badge b-" + slug(member.status), member.status));
     }
+    if (member.moved) {
+      nameRow.appendChild(el("span", "moved-flag",
+        "moved from " + member.source_status));
+    }
     body.appendChild(nameRow);
 
     var facts = el("p", "facts");
-    facts.appendChild(fact("People", member.people_count));
+    facts.appendChild(fact(member.confirmed ? "People (confirmed)" : "People (est.)",
+                           member.people_count));
     if (member.status === "Attending") {
       facts.appendChild(fact("Adults", member.adults));
       facts.appendChild(fact("Kids", member.kids));
@@ -196,6 +270,302 @@
     return li;
   }
 
+  // -------------------------------------------------- category summary bar
+  function countChip(label, value, className, filterField, filterValue) {
+    var chip = el("button", "count-chip" + (className ? " " + className : ""));
+    chip.type = "button";
+    chip.appendChild(el("span", "count-chip-label", label));
+    chip.appendChild(el("span", "count-chip-value", String(value)));
+    if (filterField) {
+      var active = state.filter[filterField] === filterValue;
+      if (active) chip.classList.add("is-active");
+      chip.setAttribute("aria-pressed", String(active));
+      chip.addEventListener("click", function () {
+        // one filter dimension at a time keeps the counts unambiguous
+        state.filter = { category: "", friend_of: "",
+                         friend_location: "", family_location: "" };
+        if (!active) state.filter[filterField] = filterValue;
+        renderCategoryBar();
+        render();
+      });
+    } else {
+      chip.disabled = true;
+    }
+    return chip;
+  }
+
+  function renderCategoryBar() {
+    if (state.tab !== ATTENDING) {
+      els.categoryBar.hidden = true;
+      return;
+    }
+    var s = state.data.summary;
+    els.categoryBar.hidden = false;
+    els.categoryBar.textContent = "";
+
+    var head = el("div", "cat-head");
+    head.appendChild(el("h2", "cat-title", "Attending by category"));
+    head.appendChild(el("p", "cat-note",
+      "Counts are people, not cards — a party of four adds four."));
+    els.categoryBar.appendChild(head);
+
+    var row = el("div", "chip-row");
+    row.appendChild(countChip("Attending", s.attending, "chip-total"));
+    row.appendChild(countChip("Family", s.attending_by_category.Family,
+                              "chip-family", "category", "Family"));
+    row.appendChild(countChip("Friends", s.attending_by_category.Friend,
+                              "chip-friend", "category", "Friend"));
+    row.appendChild(countChip("Musicians", s.attending_by_category.Musician,
+                              "chip-musician", "category", "Musician"));
+    row.appendChild(countChip("Other", s.attending_by_category.Other,
+                              "chip-other", "category", "Other"));
+    row.appendChild(countChip("Uncategorised", s.attending_by_category["Uncategorised"],
+                              "chip-none", "category", "__none__"));
+    els.categoryBar.appendChild(row);
+
+    function group(title, source, field, prefix) {
+      var keys = Object.keys(source || {});
+      if (!keys.length) return;
+      var wrap = el("div", "chip-group");
+      wrap.appendChild(el("p", "chip-group-title", title));
+      var inner = el("div", "chip-row");
+      keys.sort().forEach(function (k) {
+        inner.appendChild(countChip((prefix || "") + k, source[k],
+                                    "chip-sub", field, k));
+      });
+      wrap.appendChild(inner);
+      els.categoryBar.appendChild(wrap);
+    }
+
+    group("Friends by person", s.attending_by_friend_of, "friend_of", "");
+    group("Friends by location", s.attending_by_friend_location, "friend_location", "");
+    group("Family by location", s.attending_by_family_location, "family_location", "");
+
+    var anyFilter = Object.keys(state.filter).some(function (k) {
+      return state.filter[k];
+    });
+    if (anyFilter) {
+      var clear = el("button", "btn btn-ghost btn-small", "Clear category filter");
+      clear.type = "button";
+      clear.addEventListener("click", function () {
+        state.filter = { category: "", friend_of: "",
+                         friend_location: "", family_location: "" };
+        renderCategoryBar();
+        render();
+      });
+      els.categoryBar.appendChild(clear);
+    }
+  }
+
+  function partyMatchesFilter(party) {
+    var f = state.filter;
+    var cat = party.category || {};
+    if (f.category === "__none__") return !cat.category;
+    if (f.category && cat.category !== f.category) return false;
+    if (f.friend_of && cat.friend_of !== f.friend_of) return false;
+    if (f.friend_location && cat.friend_location !== f.friend_location) return false;
+    if (f.family_location && cat.family_location !== f.family_location) return false;
+    return true;
+  }
+
+  // ------------------------------------------------- inline category editor
+  function categoryEditor(party) {
+    var vocab = state.data.vocab;
+    var saved = party.category || {};
+    var form = el("div", "cat-editor");
+
+    function field(labelText, node, className) {
+      var wrap = el("label", "cat-field" + (className ? " " + className : ""));
+      wrap.appendChild(el("span", "cat-field-label", labelText));
+      wrap.appendChild(node);
+      return wrap;
+    }
+
+    var catSel = select("category", vocab.categories, saved.category, "Not set");
+    var friendOf = select("friend_of", vocab.friend_of, saved.friend_of, "Not set");
+    var friendLoc = select("friend_location", vocab.friend_locations,
+                           saved.friend_location, "Not set");
+    var familyLoc = select("family_location", vocab.family_locations,
+                           saved.family_location, "Not set");
+
+    var fCat = field("Category", catSel);
+    var fWho = field("Whose friend?", friendOf, "only-friend");
+    var fFriendLoc = field("Friend location", friendLoc, "only-friend");
+    var fFamilyLoc = field("Family location", familyLoc, "only-family");
+
+    function syncVisibility() {
+      var value = catSel.value;
+      fWho.hidden = value !== "Friend";
+      fFriendLoc.hidden = value !== "Friend";
+      fFamilyLoc.hidden = value !== "Family";
+    }
+    catSel.addEventListener("change", syncVisibility);
+    syncVisibility();
+
+    [fCat, fWho, fFriendLoc, fFamilyLoc].forEach(function (n) { form.appendChild(n); });
+
+    var save = el("button", "btn btn-primary btn-small", "Save");
+    save.type = "button";
+    var note = el("span", "cat-saved");
+    if (saved.updated_at) note.textContent = "saved";
+
+    save.addEventListener("click", function () {
+      save.disabled = true;
+      note.textContent = "saving…";
+      post("/api/category", {
+        party_key: party.party_key,
+        category: catSel.value,
+        friend_of: friendOf.value,
+        friend_location: friendLoc.value,
+        family_location: familyLoc.value
+      }).then(function (body) {
+        state.data.summary = body.summary;
+        replaceParty(body.party);
+        paintSummary(body.summary);
+        renderCategoryBar();
+        note.textContent = "saved";
+        toast(party.name + " categorised.");
+        render();
+      }).catch(function (err) {
+        note.textContent = "";
+        save.disabled = false;
+        toast(err.message, true);
+      });
+    });
+
+    form.appendChild(save);
+    form.appendChild(note);
+    return form;
+  }
+
+  function replaceParty(updated) {
+    if (!updated) return;
+    for (var i = 0; i < state.data.parties.length; i++) {
+      if (state.data.parties[i].party_key === updated.party_key) {
+        state.data.parties[i] = updated;
+        return;
+      }
+    }
+  }
+
+  // ------------------------------------------------------- move to attending
+  function openMoveDialog(party, members) {
+    var total = members.reduce(function (n, m) { return n + m.people_count; }, 0);
+    els.modalBody.textContent = "";
+
+    var lead = el("p", "modal-lead");
+    lead.appendChild(document.createTextNode("Move "));
+    lead.appendChild(el("strong", null, party.name));
+    lead.appendChild(document.createTextNode(
+      " (" + total + (total === 1 ? " guest" : " guests") + ") to Attending?"));
+    els.modalBody.appendChild(lead);
+
+    els.modalBody.appendChild(el("p", "modal-note",
+      members.length + (members.length === 1 ? " record" : " records") +
+      " will change. Everyone else in this party is untouched. " +
+      "Confirm how many people are actually coming — the current figure is an " +
+      "estimate from the Invited column."));
+
+    var rows = [];
+    members.forEach(function (member) {
+      var row = el("div", "move-row");
+      var head = el("p", "move-row-head");
+      head.appendChild(el("strong", null, member.full_name));
+      head.appendChild(el("span", "badge b-" + slug(member.status), member.status));
+      head.appendChild(el("span", "move-row-label", member.guest_label));
+      row.appendChild(head);
+
+      // everything the CSV currently says about this record, before any edit
+      var facts = el("dl", "move-facts");
+      [["Party", party.name],
+       ["Current status", member.status],
+       ["Invited", member.invited],
+       ["Total Attending", member.source_total_attending],
+       ["Adults", member.adults],
+       ["Kids", member.kids]].forEach(function (pair) {
+        facts.appendChild(el("dt", null, pair[0]));
+        facts.appendChild(el("dd", null, String(pair[1])));
+      });
+      row.appendChild(facts);
+
+      var inputs = el("div", "move-inputs");
+      function num(labelText, value, min) {
+        var wrap = el("label", "move-num");
+        wrap.appendChild(el("span", null, labelText));
+        var input = el("input");
+        input.type = "number";
+        input.min = String(min === undefined ? 0 : min);
+        input.value = String(value);
+        input.inputMode = "numeric";
+        wrap.appendChild(input);
+        return { wrap: wrap, input: input };
+      }
+      var people = num("People", member.people_count, 1);
+      var adults = num("Adults", member.people_count);
+      var kids = num("Kids", 0);
+      // keep adults in step with the headcount unless edited by hand
+      people.input.addEventListener("input", function () {
+        var t = parseInt(people.input.value, 10) || 0;
+        var k = parseInt(kids.input.value, 10) || 0;
+        adults.input.value = String(Math.max(t - k, 0));
+      });
+      kids.input.addEventListener("input", function () {
+        var t = parseInt(people.input.value, 10) || 0;
+        var k = parseInt(kids.input.value, 10) || 0;
+        adults.input.value = String(Math.max(t - k, 0));
+      });
+      [people, adults, kids].forEach(function (n) { inputs.appendChild(n.wrap); });
+      row.appendChild(inputs);
+      els.modalBody.appendChild(row);
+      rows.push({ member: member, people: people.input,
+                  adults: adults.input, kids: kids.input });
+    });
+
+    els.modal.hidden = false;
+    els.modalConfirm.disabled = false;
+    els.modalConfirm.focus();
+
+    els.modalConfirm.onclick = function () {
+      var payload = rows.map(function (r) {
+        return {
+          record_key: r.member.record_key,
+          total_attending: parseInt(r.people.value, 10) || 0,
+          adults: parseInt(r.adults.value, 10) || 0,
+          kids: parseInt(r.kids.value, 10) || 0
+        };
+      });
+      els.modalConfirm.disabled = true;
+      post("/api/move", { to_status: ATTENDING, records: payload })
+        .then(function (body) {
+          closeModal();
+          state.data.summary = body.summary;
+          replaceParty(body.party);
+          paintSummary(body.summary);
+          buildTabs();
+          renderCategoryBar();
+          render();
+          toast(party.name + " moved to Attending.");
+        })
+        .catch(function (err) {
+          els.modalConfirm.disabled = false;
+          toast(err.message, true);
+        });
+    };
+  }
+
+  function closeModal() {
+    els.modal.hidden = true;
+    els.modalConfirm.onclick = null;
+  }
+
+  els.modalCancel.addEventListener("click", closeModal);
+  els.modal.addEventListener("click", function (event) {
+    if (event.target === els.modal) closeModal();
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !els.modal.hidden) closeModal();
+  });
+
   // ------------------------------------------------------------- party
   function renderParty(party, activeStatus) {
     var headline = activeStatus
@@ -212,8 +582,12 @@
       head.appendChild(el("span", "group-flag", party.member_count + " in party"));
     }
 
-    head.appendChild(el("span", "headcount",
-      headline + (headline === 1 ? " person" : " people")));
+    var confirmedHere = activeStatus
+      ? activeStatus === ATTENDING
+      : party.members.every(function (m) { return m.confirmed; });
+    head.appendChild(el("span", "headcount" + (confirmedHere ? "" : " headcount-est"),
+      headline + (headline === 1 ? " person" : " people") +
+      (confirmedHere ? "" : " (est.)")));
 
     (activeStatus ? [activeStatus] : party.statuses).forEach(function (status) {
       head.appendChild(el("span", "badge b-" + slug(status), status));
@@ -231,6 +605,29 @@
       list.appendChild(renderMember(member, isActive));
     });
     card.appendChild(list);
+
+    var footer = el("div", "party-actions");
+    if (activeStatus === ATTENDING) {
+      footer.appendChild(categoryEditor(party));
+      card.appendChild(footer);
+    } else if (activeStatus) {
+      // Only the members carrying THIS status can move. A part-attending
+      // party keeps its attending members out of the payload entirely.
+      var movable = party.members.filter(function (m) {
+        return m.status === activeStatus;
+      });
+      if (movable.length) {
+        var heads = movable.reduce(function (n, m) { return n + m.people_count; }, 0);
+        var move = el("button", "btn btn-move",
+          "Move to Attending (" + heads + (heads === 1 ? " guest" : " guests") + ")");
+        move.type = "button";
+        move.addEventListener("click", function () {
+          openMoveDialog(party, movable);
+        });
+        footer.appendChild(move);
+        card.appendChild(footer);
+      }
+    }
 
     return card;
   }
@@ -300,6 +697,7 @@
   // ------------------------------------------------------------ render
   function render() {
     if (state.tab === REVIEW_TAB) {
+      els.categoryBar.hidden = true;
       renderReview();
       return;
     }
@@ -313,10 +711,8 @@
     var query = state.query.trim().toLowerCase();
 
     var matches = state.data.parties.filter(function (party) {
-      if (activeStatus && !(party.people_by_status[activeStatus] >= 0 &&
-          party.statuses.indexOf(activeStatus) !== -1)) {
-        return false;
-      }
+      if (activeStatus && party.statuses.indexOf(activeStatus) === -1) return false;
+      if (activeStatus === ATTENDING && !partyMatchesFilter(party)) return false;
       return !query || party.search_blob.indexOf(query) !== -1;
     });
 
@@ -325,9 +721,11 @@
                                  : party.total_people);
     }, 0);
 
+    var estimated = activeStatus && activeStatus !== ATTENDING;
     els.count.textContent = matches.length
       ? matches.length + (matches.length === 1 ? " party" : " parties") +
-        " · " + people + (people === 1 ? " person" : " people")
+        " · " + people + (people === 1 ? " person" : " people") +
+        (estimated ? " (estimated)" : "")
       : "";
 
     if (!matches.length) {
@@ -380,6 +778,7 @@
       state.data = data;
       state.flaggedNames = buildFlaggedNames(data.duplicates);
       buildTabs();
+      renderCategoryBar();
       render();
     })
     .catch(function (error) {

@@ -109,8 +109,120 @@ than falling back to anything guessable.
 |---|---|---|
 | `DASHBOARD_PASSWORD` | **yes in production** | The shared sign-in password. Never committed. Unset locally, a random one is generated and printed per run; unset on Render, the app refuses to boot. |
 | `SECRET_KEY` | in production | Signs the session cookie. A random one is generated per process if unset, which logs everyone out on restart. |
+| `DATABASE_URL` | recommended in production | Where categories and status moves are stored. Unset, it falls back to a SQLite file in `instance/`, **which Render's free plan wipes on every restart and redeploy.** |
 | `PORT` | no | Port to bind. Defaults to 5000. |
 | `RENDER` | no | Set automatically by Render; makes the session cookie `Secure` and enforces the password check above. |
+
+---
+
+## Categories and RSVP moves
+
+### Where the data lives
+
+`data/guestlist.csv` is **immutable**. Nothing in the app ever writes to it, so
+the original export stays intact and no two users can race to rewrite a
+Git-tracked file. Everything a user changes goes to a database instead and is
+applied as an overlay when the guest list is read:
+
+```
+data/guestlist.csv  ->  parsed once at import  ->  base parties (never mutated)
+                                                        +
+database overlay  ->  status overrides + categories  ->  what you see
+```
+
+Each CSV row gets a stable `record_key`: `sha1(group|name|contact|guest_label)`,
+truncated to 16 characters. It is **content-derived, not positional**, so
+re-exporting the CSV in a different order does not orphan saved data. Verified
+unique across all 179 rows.
+
+The overlay is read **per request**, not cached in a module global, because
+`--workers 2` means two processes that would otherwise disagree after a write.
+
+### Tables
+
+| Table | Holds |
+|---|---|
+| `guest_status_override` | One row per CSV row whose status was changed, with the confirmed headcount |
+| `party_category` | One row per categorised party |
+| `change_log` | Append-only audit: what changed, from what, to what, when |
+
+`change_log` is never updated or deleted, so the original RSVP status stays
+recoverable however many times a record is moved. `POST /api/revert` drops an
+override and returns a row to whatever the CSV says.
+
+### Choosing a database
+
+`DATABASE_URL` unset gives you SQLite in `instance/` — fine locally, **wrong on
+Render's free plan**, whose filesystem is ephemeral. For a deploy that must keep
+its data, point it at PostgreSQL. Render's own free Postgres expires after 30
+days; a paid instance or an external free tier (Neon, Supabase) does not. The
+code is identical either way.
+
+### Headcounts when moving a record
+
+Attending is the only status with a real headcount — a non-attending row carries
+`Total Attending = 0`, so its people count is an *estimate* from `Invited`
+(falling back to 1). Promoting a record therefore asks you to confirm the actual
+number, pre-filled with that estimate.
+
+A consequence worth knowing: **the list total can move.** Confirming 2 people for
+a row that was estimated at 5 drops the total by 3. That is the estimate being
+replaced by a real figure, not a counting error.
+
+### Mixed-status parties
+
+A move targets **specific record keys, never a whole party.** Sabitha
+Theetharappan has three attending members and one regret; on the Regrets tab her
+card's button carries only the Guest 4 key, and the API rejects any key that is
+already Attending. Her attending members cannot be touched by that action.
+
+### Endpoints
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/category` | POST | Save one party's categorisation |
+| `/api/move` | POST | Move specific records to Attending |
+| `/api/revert` | POST | Drop an override, restoring the CSV status |
+| `/api/history` | GET | Audit trail, newest first |
+
+### Confirmed vs estimated
+
+Only **Attending** is a confirmed headcount -- those guests told us how many are
+coming. Every other status has `Total Attending = 0` in the source, so its
+people figure is **estimated from `Invited`** (falling back to 1 where `Invited`
+is 0 too). The UI says so in three places: a legend under the summary cards, a
+per-card `Confirmed headcount` / `Estimated from Invited` flag, and an `(est.)`
+marker on individual people counts.
+
+The overall 347 therefore mixes 242 confirmed with 105 estimated and should be
+read as an upper bound, not a confirmed figure. The Total Guests card spells the
+split out rather than presenting one number as if it were solid.
+
+## Tests
+
+```bash
+python test_overlay.py
+```
+
+Covers the audited baseline (347 / 242 / 9 / 96 / 152 / 179), category counting
+by headcount, the mixed-status guard, headcount arithmetic in both directions,
+the audit trail (original vs previous vs new, `changed_by`, timestamp),
+persistence across a restart, revert, and auth on every new endpoint. Uses a
+throwaway SQLite file; your real database is untouched.
+
+```bash
+python test_workers.py
+```
+
+Starts **two real Flask processes against one shared database** and writes
+through each while reading from the other, which is what `gunicorn --workers 2`
+does in production. This is the check that would fail if the merged overlay were
+ever cached in a module global.
+
+It uses a shared SQLite file rather than PostgreSQL, because neither Docker nor
+a Postgres server is available on the development machine. Same code path -- one
+engine per process, overlay read per request -- so it proves the cross-process
+design, but it does not exercise Postgres-specific behaviour under load.
 
 ---
 
