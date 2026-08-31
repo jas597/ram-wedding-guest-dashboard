@@ -38,8 +38,9 @@ def summary(c):
 
 
 def party(c, key):
+    """Find a party by party_key, or by name for readability in tests."""
     for p in c.get("/api/data").get_json()["parties"]:
-        if p["party_key"] == key:
+        if p["party_key"] == key or p["name"] == key:
             return p
     return None
 
@@ -224,6 +225,64 @@ check("attending back to 242", s["attending"], 242)
 check("regrets back to 9", s["regrets"], 9)
 hist = c2.get("/api/history").get_json()["history"]
 check("revert also logged", len([h for h in hist if h["kind"] == "status"]) >= 4, True)
+
+print("\n--- undo move: guards and category handling ---")
+# The Guest 4 record was reverted above, so re-move it to set the cases up.
+c.post("/api/move", json={"records": [
+    {"record_key": SABITHA_REGRET, "total_attending": 2, "adults": 1, "kids": 1}]})
+sab = party(c, "Sabitha Theetharappan")
+check("set up: party attending", sab["people_by_status"].get("Attending"), 5)
+
+# a record that was never moved has nothing to undo
+check("undo refused for a non-moved record",
+      c.post("/api/revert", json={"record_key": SABITHA_G1}).status_code, 409)
+
+# undoing while other members still attend must NOT drop the party category
+c.post("/api/category", json={"party_key": sab["party_key"], "category": "Family",
+                              "family_location": "Local / NC"})
+r = c.post("/api/revert", json={"record_key": SABITHA_REGRET,
+                                "remove_category": True})
+body = r.get_json()
+check("undo ok", r.status_code, 200)
+check("reports the status it returned to", body["reverted_to"], "Regrets")
+check("3 members still attending", body["still_attending"], 3)
+check("category KEPT because others still attend", body["category_removed"], False)
+check("category still on the party", body["party"]["category"]["category"], "Family")
+check("attending back down", summary(c)["attending"], 242)
+check("regrets back up", summary(c)["regrets"], 9)
+
+# a solo party, where undoing does empty it
+selv = party(c, "Selvaraj")
+skey = selv["members"][0]["record_key"]
+c.post("/api/move", json={"records": [
+    {"record_key": skey, "total_attending": 2, "adults": 2, "kids": 0}]})
+c.post("/api/category", json={"party_key": selv["party_key"], "category": "Musician"})
+check("solo party categorised",
+      party(c, selv["party_key"])["category"]["category"], "Musician")
+body = c.post("/api/revert", json={"record_key": skey,
+                                   "remove_category": True}).get_json()
+check("nobody left attending", body["still_attending"], 0)
+check("category removed on request", body["category_removed"], True)
+check("category gone", party(c, selv["party_key"])["category"], None)
+check("sent bucket restored", summary(c)["sent"], 46)
+
+# same again, choosing to KEEP the category
+c.post("/api/move", json={"records": [
+    {"record_key": skey, "total_attending": 2, "adults": 2, "kids": 0}]})
+c.post("/api/category", json={"party_key": selv["party_key"], "category": "Musician"})
+body = c.post("/api/revert", json={"record_key": skey}).get_json()
+check("category kept when not requested", body["category_removed"], False)
+check("category survives the undo",
+      party(c, selv["party_key"])["category"]["category"], "Musician")
+c.post("/api/category", json={"party_key": selv["party_key"], "category": ""})
+
+hist = c.get("/api/history").get_json()["history"]
+reversals = [h for h in hist if h["kind"] == "status"
+             and (h["to"] or {}).get("status") == "(reverted to source CSV)"]
+check("reversals recorded in the audit log", len(reversals) >= 3, True)
+check("reversal names the record", bool(reversals[0]["subject"]), True)
+check("reversal has changed_by", reversals[0]["changed_by"], "shared-dashboard-user")
+check("baseline restored", summary(c)["attending"], 242)
 
 print("\n--- auth still enforced on the new endpoints ---")
 anon = application.app.test_client()

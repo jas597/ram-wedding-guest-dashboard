@@ -176,6 +176,31 @@ Theetharappan has three attending members and one regret; on the Regrets tab her
 card's button carries only the Guest 4 key, and the API rejects any key that is
 already Attending. Her attending members cannot be touched by that action.
 
+### Two ways to view Attending
+
+A `Pipeline View | List View` toggle sits above the Attending list; the choice is
+remembered in `localStorage`.
+
+**Pipeline** shows five colour-coded buckets -- Family (gold), Friends (blue),
+Musicians (purple), Other (teal), Uncategorised (grey) -- each with its party
+count and **headcount in people**, containing compact cards. Saving a category
+moves the card to its new bucket and updates both counts immediately, with no
+page reload. **List** is the full detail view with contacts, messages and
+filters.
+
+### Undoing a manual move
+
+An Attending record that was moved there manually carries a
+**Change status / undo move** action. It opens a confirmation showing
+*Originally*, *Current status*, *Confirmed attending* and *Reverting to* -- there
+is deliberately no one-click path.
+
+Undo is record level, like the move it reverses. Because categories are stored
+per party, the "also remove the category" question only appears when the
+reversal leaves nobody in that party attending; otherwise removing it would
+strip the category from members who never moved. The reversal is written to
+`change_log` like any other change.
+
 ### Endpoints
 
 | Route | Method | Purpose |

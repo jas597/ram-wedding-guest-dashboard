@@ -17,7 +17,9 @@
     showContacts: true,
     flaggedNames: new Set(),
     // category filters, only meaningful on the Attending tab
-    filter: { category: "", friend_of: "", friend_location: "", family_location: "" }
+    filter: { category: "", friend_of: "", friend_location: "", family_location: "" },
+    // "pipeline" or "list", Attending tab only
+    view: "pipeline"
   };
 
   var els = {
@@ -30,7 +32,10 @@
     contacts: document.getElementById("show-contacts"),
     count: document.getElementById("result-count"),
     categoryBar: document.getElementById("category-bar"),
+    viewSwitch: document.getElementById("view-switch"),
+    pipeline: document.getElementById("pipeline"),
     modal: document.getElementById("modal"),
+    modalTitle: document.getElementById("modal-title"),
     modalBody: document.getElementById("modal-body"),
     modalCancel: document.getElementById("modal-cancel"),
     modalConfirm: document.getElementById("modal-confirm"),
@@ -223,6 +228,7 @@
         state.tab = tab.key;
         buildTabs();
         renderCategoryBar();
+        renderViewSwitch();
         render();
       });
       els.tabs.appendChild(button);
@@ -451,6 +457,8 @@
   // ------------------------------------------------------- move to attending
   function openMoveDialog(party, members) {
     var total = members.reduce(function (n, m) { return n + m.people_count; }, 0);
+    els.modalTitle.textContent = "Move to Attending?";
+    els.modalConfirm.textContent = "Confirm move";
     els.modalBody.textContent = "";
 
     var lead = el("p", "modal-lead");
@@ -566,6 +574,304 @@
     if (event.key === "Escape" && !els.modal.hidden) closeModal();
   });
 
+  // ---------------------------------------------------------- pipeline
+  /* The five buckets, in the order they read best: the three real
+   * categories, then the catch-all, then whatever nobody has sorted yet. */
+  var BUCKETS = [
+    { key: "Family", label: "Family", cls: "bucket-family" },
+    { key: "Friend", label: "Friends", cls: "bucket-friends" },
+    { key: "Musician", label: "Musicians", cls: "bucket-musicians" },
+    { key: "Other", label: "Other", cls: "bucket-other" },
+    { key: null, label: "Uncategorised", cls: "bucket-none" }
+  ];
+
+  function loadView() {
+    try {
+      return window.localStorage.getItem("attendingView") === "list"
+        ? "list" : "pipeline";
+    } catch (e) {
+      return "pipeline";
+    }
+  }
+
+  function saveView(view) {
+    try {
+      window.localStorage.setItem("attendingView", view);
+    } catch (e) { /* private mode, or storage blocked -- not worth failing over */ }
+  }
+
+  function renderViewSwitch() {
+    var show = state.tab === ATTENDING;
+    els.viewSwitch.hidden = !show;
+    if (!show) return;
+    [].forEach.call(els.viewSwitch.querySelectorAll(".view-btn"), function (btn) {
+      var active = btn.getAttribute("data-view") === state.view;
+      btn.setAttribute("aria-pressed", String(active));
+      btn.classList.toggle("is-active", active);
+    });
+  }
+
+  /* Category plus its follow-up answers, as small chips. */
+  function categoryChips(party) {
+    var wrap = el("div", "cat-chips");
+    var cat = party.category || {};
+    if (!cat.category) {
+      wrap.appendChild(el("span", "cat-chip cat-chip-none", "Uncategorised"));
+      return wrap;
+    }
+    wrap.appendChild(el("span", "cat-chip cat-chip-main", cat.category));
+    if (cat.category === "Friend") {
+      if (cat.friend_of) wrap.appendChild(el("span", "cat-chip", cat.friend_of));
+      if (cat.friend_location) {
+        wrap.appendChild(el("span", "cat-chip", cat.friend_location));
+      }
+    } else if (cat.category === "Family" && cat.family_location) {
+      wrap.appendChild(el("span", "cat-chip", cat.family_location));
+    }
+    return wrap;
+  }
+
+  function bucketOf(party) {
+    return (party.category || {}).category || null;
+  }
+
+  function pipelineCard(party) {
+    var card = el("article", "pcard");
+
+    var head = el("div", "pcard-head");
+    head.appendChild(el("h4", "pcard-name", party.name));
+    head.appendChild(el("span", "pcard-count",
+      party.attending_people + (party.attending_people === 1 ? " person" : " people")));
+    card.appendChild(head);
+
+    card.appendChild(categoryChips(party));
+
+    if (party.is_group) {
+      card.appendChild(el("p", "pcard-meta", party.member_count + " in party"));
+    }
+
+    var actions = el("div", "pcard-actions");
+
+    var edit = el("button", "btn btn-ghost btn-small", "Categorise");
+    edit.type = "button";
+    edit.setAttribute("aria-expanded", "false");
+    var drawer = el("div", "pcard-drawer");
+    drawer.hidden = true;
+    edit.addEventListener("click", function () {
+      drawer.hidden = !drawer.hidden;
+      edit.setAttribute("aria-expanded", String(!drawer.hidden));
+      edit.textContent = drawer.hidden ? "Categorise" : "Close";
+      if (!drawer.hidden && !drawer.childNodes.length) {
+        drawer.appendChild(categoryEditor(party));
+      }
+    });
+    actions.appendChild(edit);
+
+    var undo = undoButton(party);
+    if (undo) actions.appendChild(undo);
+
+    card.appendChild(actions);
+    card.appendChild(drawer);
+    return card;
+  }
+
+  function renderPipeline() {
+    els.pipeline.textContent = "";
+    var query = state.query.trim().toLowerCase();
+
+    var attending = state.data.parties.filter(function (party) {
+      if (party.attending_people <= 0) return false;
+      if (!partyMatchesFilter(party)) return false;
+      return !query || party.search_blob.indexOf(query) !== -1;
+    });
+
+    var total = 0;
+    BUCKETS.forEach(function (bucket) {
+      var inBucket = attending.filter(function (p) {
+        return bucketOf(p) === bucket.key;
+      });
+      var people = inBucket.reduce(function (n, p) {
+        return n + p.attending_people;
+      }, 0);
+      total += people;
+
+      var column = el("section", "bucket " + bucket.cls);
+
+      var header = el("header", "bucket-head");
+      header.appendChild(el("h3", "bucket-title", bucket.label));
+      header.appendChild(el("p", "bucket-stats",
+        inBucket.length + (inBucket.length === 1 ? " party" : " parties") +
+        " · " + people + (people === 1 ? " person" : " people")));
+      column.appendChild(header);
+
+      var body = el("div", "bucket-body");
+      if (!inBucket.length) {
+        body.appendChild(el("p", "bucket-empty",
+          query || bucketOf ? "Nothing here." : "Nothing here."));
+      } else {
+        inBucket.forEach(function (p) { body.appendChild(pipelineCard(p)); });
+      }
+      column.appendChild(body);
+      els.pipeline.appendChild(column);
+    });
+
+    els.count.textContent = attending.length
+      ? attending.length + (attending.length === 1 ? " party" : " parties") +
+        " · " + total + (total === 1 ? " person" : " people")
+      : "No attending guests match.";
+  }
+
+  // ------------------------------------------------- undo a manual move
+  function movedMembers(party) {
+    return party.members.filter(function (m) {
+      return m.moved && m.status === ATTENDING;
+    });
+  }
+
+  function undoButton(party) {
+    var moved = movedMembers(party);
+    if (!moved.length) return null;
+    var btn = el("button", "btn btn-undo btn-small",
+      moved.length === 1 ? "Change status / undo move"
+                         : "Change status / undo " + moved.length + " moves");
+    btn.type = "button";
+    btn.addEventListener("click", function () {
+      openUndoDialog(party, moved);
+    });
+    return btn;
+  }
+
+  function openUndoDialog(party, moved) {
+    els.modalTitle.textContent = "Undo move back to the original status?";
+    els.modalConfirm.textContent = "Confirm undo";
+    els.modalBody.textContent = "";
+
+    var lead = el("p", "modal-lead");
+    lead.appendChild(document.createTextNode("Return "));
+    lead.appendChild(el("strong", null, party.name));
+    lead.appendChild(document.createTextNode(
+      moved.length === 1 ? " to its original status?"
+                         : " to their original statuses?"));
+    els.modalBody.appendChild(lead);
+
+    els.modalBody.appendChild(el("p", "modal-note",
+      "This undoes a manual move only. The record goes back to exactly what the "
+      + "source CSV said, its confirmed headcount is dropped, and the reversal is "
+      + "written to the audit log. Nothing else in this party is touched."));
+
+    var rows = [];
+    moved.forEach(function (member) {
+      var row = el("div", "move-row");
+      var head = el("p", "move-row-head");
+      head.appendChild(el("strong", null, member.full_name));
+      head.appendChild(el("span", "move-row-label", member.guest_label));
+      row.appendChild(head);
+
+      var facts = el("dl", "move-facts");
+      [["Originally", member.source_status],
+       ["Current status", member.status],
+       ["Confirmed attending", member.people_count],
+       ["Reverting to", member.source_status]].forEach(function (pair) {
+        facts.appendChild(el("dt", null, pair[0]));
+        facts.appendChild(el("dd", null, String(pair[1])));
+      });
+      row.appendChild(facts);
+
+      var pick = el("label", "undo-pick");
+      var box = el("input");
+      box.type = "checkbox";
+      box.checked = true;
+      pick.appendChild(box);
+      pick.appendChild(el("span", null, "Undo this one"));
+      row.appendChild(pick);
+
+      els.modalBody.appendChild(row);
+      rows.push({ member: member, box: box });
+    });
+
+    // The category sits on the party, so only offer to clear it when the
+    // reversal leaves nobody in this party attending. Otherwise clearing it
+    // would strip the category from members who never moved.
+    var catBox = null;
+    function refreshCategoryPrompt() {
+      var going = rows.filter(function (r) { return r.box.checked; })
+                      .reduce(function (n, r) { return n + r.member.people_count; }, 0);
+      var leaves = party.attending_people - going;
+      var show = leaves <= 0 && (party.category || {}).category;
+      if (catQuestion) catQuestion.hidden = !show;
+      if (remainNote) {
+        remainNote.textContent = leaves > 0
+          ? leaves + (leaves === 1 ? " person" : " people") +
+            " in this party stay attending, so the category is kept."
+          : "";
+        remainNote.hidden = leaves <= 0;
+      }
+    }
+
+    var catQuestion = el("div", "undo-category");
+    var catLabel = el("label", "undo-pick");
+    catBox = el("input");
+    catBox.type = "checkbox";
+    catLabel.appendChild(catBox);
+    catLabel.appendChild(el("span", null,
+      "Also remove this party's category (" +
+      ((party.category || {}).category || "none") + ")"));
+    catQuestion.appendChild(catLabel);
+    catQuestion.appendChild(el("p", "undo-hint",
+      "Leave unticked to keep the categorisation for later."));
+    catQuestion.hidden = true;
+    els.modalBody.appendChild(catQuestion);
+
+    var remainNote = el("p", "undo-hint");
+    remainNote.hidden = true;
+    els.modalBody.appendChild(remainNote);
+
+    rows.forEach(function (r) {
+      r.box.addEventListener("change", refreshCategoryPrompt);
+    });
+    refreshCategoryPrompt();
+
+    els.modal.hidden = false;
+    els.modalConfirm.disabled = false;
+    els.modalConfirm.focus();
+
+    els.modalConfirm.onclick = function () {
+      var chosen = rows.filter(function (r) { return r.box.checked; });
+      if (!chosen.length) {
+        toast("Nothing selected to undo.", true);
+        return;
+      }
+      els.modalConfirm.disabled = true;
+      var removeCategory = !catQuestion.hidden && catBox.checked;
+
+      // one request per record; the category question rides on the last
+      var chain = Promise.resolve(null);
+      chosen.forEach(function (r, index) {
+        chain = chain.then(function () {
+          return post("/api/revert", {
+            record_key: r.member.record_key,
+            remove_category: removeCategory && index === chosen.length - 1
+          });
+        });
+      });
+
+      chain.then(function (body) {
+        closeModal();
+        state.data.summary = body.summary;
+        replaceParty(body.party);
+        paintSummary(body.summary);
+        buildTabs();
+        renderCategoryBar();
+        render();
+        toast(party.name + " returned to " + body.reverted_to +
+              (body.category_removed ? " · category removed" : ""));
+      }).catch(function (err) {
+        els.modalConfirm.disabled = false;
+        toast(err.message, true);
+      });
+    };
+  }
+
   // ------------------------------------------------------------- party
   function renderParty(party, activeStatus) {
     var headline = activeStatus
@@ -609,6 +915,12 @@
     var footer = el("div", "party-actions");
     if (activeStatus === ATTENDING) {
       footer.appendChild(categoryEditor(party));
+      var undoHere = undoButton(party);
+      if (undoHere) {
+        var undoRow = el("div", "party-undo");
+        undoRow.appendChild(undoHere);
+        footer.appendChild(undoRow);
+      }
       card.appendChild(footer);
     } else if (activeStatus) {
       // Only the members carrying THIS status can move. A part-attending
@@ -698,16 +1010,25 @@
   function render() {
     if (state.tab === REVIEW_TAB) {
       els.categoryBar.hidden = true;
+      els.pipeline.hidden = true;
       renderReview();
       return;
     }
 
     els.review.hidden = true;
-    els.results.hidden = false;
     els.toolbar.hidden = false;
     els.results.textContent = "";
 
     var activeStatus = state.tab === ALL_TAB ? null : state.tab;
+
+    if (activeStatus === ATTENDING && state.view === "pipeline") {
+      els.results.hidden = true;
+      els.pipeline.hidden = false;
+      renderPipeline();
+      return;
+    }
+    els.pipeline.hidden = true;
+    els.results.hidden = false;
     var query = state.query.trim().toLowerCase();
 
     var matches = state.data.parties.filter(function (party) {
@@ -759,6 +1080,15 @@
     render();
   });
 
+  [].forEach.call(els.viewSwitch.querySelectorAll(".view-btn"), function (btn) {
+    btn.addEventListener("click", function () {
+      state.view = btn.getAttribute("data-view");
+      saveView(state.view);
+      renderViewSwitch();
+      render();
+    });
+  });
+
   els.contacts.addEventListener("change", function () {
     state.showContacts = els.contacts.checked;
     render();
@@ -777,8 +1107,10 @@
     .then(function (data) {
       state.data = data;
       state.flaggedNames = buildFlaggedNames(data.duplicates);
+      state.view = loadView();
       buildTabs();
       renderCategoryBar();
+      renderViewSwitch();
       render();
     })
     .catch(function (error) {
