@@ -721,6 +721,329 @@ body {
 .chip-group .chip-row { margin-top: 7px; }
 .category-bar > .btn { margin-top: 14px; }
 
+/* ------------------------------------------------------ view switch */
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 16px;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.view-btn {
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  min-height: 36px;
+  padding: 7px 18px;
+  color: var(--slate);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.view-btn:hover { color: var(--ink); }
+
+.view-btn.is-active {
+  background: var(--surface);
+  color: var(--navy);
+  box-shadow: 0 1px 3px rgba(31, 51, 80, .14);
+}
+
+/* --------------------------------------------- attending overview */
+.overview { margin-bottom: 26px; }
+
+.ov-head { margin-bottom: 12px; }
+.ov-title { margin: 0; font-size: 16px; color: var(--navy); }
+.ov-sub { margin: 3px 0 0; font-size: 13px; color: var(--slate); }
+
+.ov-hint {
+  margin: 16px 0 0;
+  padding: 18px 20px;
+  font-size: 13.5px;
+  color: var(--slate);
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  max-width: 90ch;
+}
+
+/* level 1 -- the whole distribution, no scrolling */
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.cat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  font-family: inherit;
+  padding: 15px 16px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--slate);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.cat-card:hover { border-color: var(--navy-soft); }
+.cat-card.is-open {
+  box-shadow: 0 0 0 2px var(--navy) inset, var(--shadow);
+  border-color: var(--navy);
+}
+
+.cat-card-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.cat-card-people {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.02em;
+}
+
+.cat-card-unit { font-size: 12px; color: var(--slate); }
+.cat-card-parties { font-size: 12.5px; color: var(--slate); font-weight: 600; }
+.cat-card-hint { font-size: 11.5px; color: #9aa5b4; font-style: italic; margin-top: 8px; }
+
+.cat-card-subs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.cat-sub-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.cat-sub-name { color: var(--slate); overflow-wrap: anywhere; }
+.cat-sub-val { font-weight: 700; color: var(--ink); }
+
+/* ONE colour per category, declared once. Every card, tile, chip and label
+   that represents a category inherits these three variables, so Family is the
+   same gold everywhere and no individual guest gets a shade of their own. */
+.is-family    { --cat-ink: #8a6508; --cat-strong: #b8860b; --cat-tint: #fdf7e8; --cat-line: #e8d5a6; }
+.is-friends   { --cat-ink: #24466f; --cat-strong: #2c548a; --cat-tint: #eef3fa; --cat-line: #c8d9ee; }
+.is-musicians { --cat-ink: #5d3f72; --cat-strong: #6f4b86; --cat-tint: #f5f0f8; --cat-line: #ddd0e4; }
+.is-other     { --cat-ink: #26635c; --cat-strong: #2f7a72; --cat-tint: #edf6f5; --cat-line: #c3ded9; }
+.is-none      { --cat-ink: #6a778a; --cat-strong: #b4bcc7; --cat-tint: #f4f6f8; --cat-line: #dbe2eb; }
+
+.cat-card { border-top-color: var(--cat-strong, var(--slate)); }
+.cat-card .cat-card-label,
+.cat-card .cat-card-people { color: var(--cat-ink, var(--ink)); }
+
+/* saved state: the whole categorisation as one coloured label */
+.cat-control { display: flex; flex-direction: column; gap: 9px; }
+
+.cat-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.cat-saved {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--cat-ink, var(--slate));
+  background: var(--cat-tint, var(--page));
+  border: 1px solid var(--cat-line, var(--line));
+  overflow-wrap: anywhere;
+}
+
+.cat-saved-empty { font-weight: 600; font-style: italic; }
+
+.cat-drawer { border-top: 1px dashed var(--line); padding-top: 10px; }
+.cat-drawer .cat-editor { flex-direction: column; align-items: stretch; }
+.cat-drawer .cat-field { width: 100%; }
+.cat-drawer select { width: 100%; min-width: 0; }
+
+/* breadcrumb */
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 20px 0 14px;
+  padding: 10px 14px;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+}
+
+.crumb { font-family: inherit; font-size: 13.5px; }
+.crumb-link {
+  font-weight: 600;
+  color: var(--navy-soft);
+  background: none;
+  border: 0;
+  padding: 3px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.crumb-link:hover { color: var(--navy); }
+.crumb-current { font-weight: 700; color: var(--ink); padding: 3px 4px; }
+.crumb-sep { color: #a7b2c1; }
+.crumbs-all { margin-left: auto; }
+
+/* level 2 -- sub-groups */
+.sub-section { margin-bottom: 14px; }
+.sub-section-title {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.sub-row { display: flex; flex-wrap: wrap; gap: 9px; }
+
+.sub-tile {
+  background: var(--cat-tint, var(--surface));
+  border-color: var(--cat-line, var(--line));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  font-family: inherit;
+  min-width: 150px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sub-tile:hover { border-color: var(--cat-strong, var(--navy-soft)); }
+.sub-tile.is-active {
+  background: var(--cat-strong, var(--navy));
+  border-color: var(--cat-strong, var(--navy));
+}
+.sub-tile.is-active .sub-tile-name,
+.sub-tile.is-active .sub-tile-stats { color: #fff; }
+
+.sub-tile-name { font-size: 13.5px; font-weight: 700; color: var(--cat-ink, var(--ink)); }
+.sub-tile-stats { font-size: 12px; color: var(--slate); }
+
+/* level 3 -- the guests */
+.drill-list { margin-top: 18px; }
+.drill-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin-bottom: 10px;
+}
+.drill-title { margin: 0; font-size: 14px; color: var(--navy); }
+.drill-stats { margin: 0; font-size: 12.5px; color: var(--slate); font-weight: 600; }
+
+.drill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 11px;
+}
+
+.bucket-empty {
+  margin: 0;
+  padding: 22px 4px;
+  text-align: center;
+  font-size: 12.5px;
+  color: #9aa5b4;
+}
+
+/* guest cards inside the drill-down */
+.pcard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cat-strong, var(--line));
+  border-radius: 8px;
+  padding: 11px 12px;
+}
+
+.pcard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.pcard-name {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pcard-count {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.pcard-meta { margin: 6px 0 0; font-size: 11.5px; color: var(--slate); }
+
+.pcard .cat-control { margin-top: 9px; }
+.pcard-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+
+/* -------------------------------------------------- undo a move */
+.btn-undo {
+  background: var(--amber-tint);
+  color: #8a5a00;
+  border-color: #ecd9a8;
+}
+
+.btn-undo:hover { background: #f9edd2; }
+
+.party-undo { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+.undo-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.undo-pick input { width: 18px; height: 18px; }
+
+.undo-category {
+  border: 1px solid #ecd9a8;
+  background: var(--amber-tint);
+  border-radius: 8px;
+  padding: 11px 13px;
+  margin-bottom: 10px;
+}
+
+.undo-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--slate); }
+
 /* ---------------------------------------------------- party actions */
 .party-actions {
   padding: 13px 18px;
@@ -760,7 +1083,7 @@ body {
 .cat-editor select:focus-visible,
 .move-num input:focus-visible { outline: 2px solid var(--navy-soft); outline-offset: 1px; }
 
-.cat-saved { font-size: 12.5px; color: var(--green); font-weight: 600; }
+.cat-editor-note { font-size: 12.5px; color: var(--green); font-weight: 600; }
 
 .moved-flag {
   font-size: 11px;
@@ -889,6 +1212,23 @@ body {
   .cat-editor .btn { width: 100%; }
   .party-actions { padding: 12px 14px; }
   .btn-move { width: 100%; }
+  /* one category card per row -- never a horizontal scroller on a phone */
+  .cat-grid { grid-template-columns: 1fr; gap: 10px; }
+  .cat-card { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .cat-card-label { width: 100%; }
+  .cat-card-people { font-size: 28px; }
+  .cat-card-subs { margin-top: 8px; }
+  .drill-grid { grid-template-columns: 1fr; }
+  .cat-control-row { flex-direction: column; align-items: stretch; }
+  .cat-control-row .btn { width: 100%; }
+  .cat-saved { justify-content: center; text-align: center; }
+  .sub-row { flex-direction: column; }
+  .sub-tile { width: 100%; min-width: 0; }
+  .crumbs { gap: 4px; }
+  .crumbs-all { margin-left: 0; width: 100%; margin-top: 8px; }
+  .view-switch { display: flex; width: 100%; }
+  .view-btn { flex: 1; }
+  .pcard-actions .btn { width: 100%; }
   .modal { padding: 12px; align-items: flex-end; }
   .modal-card { padding: 18px; max-height: 92vh; }
   .modal-actions { flex-direction: column-reverse; }

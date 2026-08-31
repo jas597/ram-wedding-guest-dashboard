@@ -176,6 +176,94 @@ Theetharappan has three attending members and one regret; on the Regrets tab her
 card's button carries only the Guest 4 key, and the API rejects any key that is
 already Attending. Her attending members cannot be touched by that action.
 
+### Two ways to view Attending
+
+An `Overview | Full List` toggle sits above the Attending list; the choice is
+remembered in `localStorage`.
+
+**Overview** is a three-level drill-down, built so the distribution of 242
+people reads in about five seconds without scrolling:
+
+* **Level 1** -- five colour-coded category cards (Family gold, Friends blue,
+  Musicians purple, Other teal, Uncategorised grey) showing people and parties,
+  with the important sub-group counts printed inside each card. **No guest cards
+  are rendered at this level.**
+* **Level 2** -- clicking a category reveals its sub-groups as tiles with their
+  own counts: whose friend (Jawa / Shanthi / Ram) and location for Friends,
+  location for Family.
+* **Level 3** -- the guest cards appear only once a category is chosen, and
+  narrow further as sub-groups are picked.
+
+A breadcrumb (`Attending > Friends > Ram > Outside NC`) walks back up a level at
+a time, and **Show all attending** jumps to the full list. Saving a category
+re-counts every level and relocates the party immediately, with no reload.
+
+**Full List** is the detailed view with contacts, messages and status filters.
+
+### One colour per category
+
+Each category owns exactly one colour, declared once in `style.css` as three CSS
+variables on an `.is-*` class:
+
+| Category | Colour |
+|---|---|
+| Family | warm gold |
+| Friends | blue |
+| Musicians | purple |
+| Other | teal |
+| Uncategorised | neutral grey |
+
+Every element that represents a category -- the level 1 card, its sub-group
+tiles, a guest card's left edge and its saved label -- inherits those variables,
+so Family is the same gold everywhere and no individual guest ever gets a shade
+of their own.
+
+### Collapsed category cards
+
+A categorised party shows its categorisation as one label in the category
+colour, and nothing else:
+
+```
+Prof. Balu Gokaraju                    4 people
+Family · India                            [Edit]
+```
+
+The dropdowns only exist after pressing **Edit**, and saving collapses the card
+back to the label. Uncategorised parties show an italic *Uncategorised* label and
+a **Categorise** button instead. This keeps a screen of guests scannable by
+colour and label rather than a wall of select boxes.
+
+### Mobile
+
+Below 720px the layout becomes a single column and **never scrolls sideways**.
+Category cards, sub-group tiles and guest cards are one per row at full width;
+filter chips wrap onto as many lines as they need; the breadcrumb wraps and
+"Show all attending" drops to its own full-width row; selects and buttons are
+100% of their card; dialogs sit flush with 12px gutters and stack their actions.
+
+Audited at 375px and 320px across every tab and state -- All, the Attending
+overview at all three levels with edit drawers open, the full list with its chip
+bar, Regrets, Sent, Review, both dialogs and the sign-in page. In each,
+`document.documentElement.scrollWidth === clientWidth`, with no element
+extending past the viewport and no inner `overflow-x` scroller.
+
+The eight RSVP status tiles at the very top stay two per row on a phone: they
+are small numeric tiles, they fit without overflow, and stacking all eight would
+put roughly 600px of scrolling before the tabs.
+
+### Undoing a manual move
+
+An Attending record that was moved there manually carries a
+**Change status / undo move** action. It opens a confirmation showing
+*Originally*, *Current status*, *Confirmed attending* and *Reverting to* -- there
+is deliberately no one-click path.
+
+Undo is record level, like the move it reverses. Because categories are stored
+per party, the "also remove the category" question only appears when the
+reversal leaves nobody in that party attending; otherwise removing it would
+strip the category from members who never moved. The reversal is written to
+`change_log` like any other change.
+
 ### Endpoints
 
 | Route | Method | Purpose |

@@ -17,7 +17,11 @@
     showContacts: true,
     flaggedNames: new Set(),
     // category filters, only meaningful on the Attending tab
-    filter: { category: "", friend_of: "", friend_location: "", family_location: "" }
+    filter: { category: "", friend_of: "", friend_location: "", family_location: "" },
+    // "overview" (drill-down dashboard) or "list", Attending tab only
+    view: "overview",
+    // which category / sub-group the overview is drilled into
+    drill: { category: null, friendOf: null, location: null }
   };
 
   var els = {
@@ -30,7 +34,10 @@
     contacts: document.getElementById("show-contacts"),
     count: document.getElementById("result-count"),
     categoryBar: document.getElementById("category-bar"),
+    viewSwitch: document.getElementById("view-switch"),
+    overview: document.getElementById("overview"),
     modal: document.getElementById("modal"),
+    modalTitle: document.getElementById("modal-title"),
     modalBody: document.getElementById("modal-body"),
     modalCancel: document.getElementById("modal-cancel"),
     modalConfirm: document.getElementById("modal-confirm"),
@@ -221,8 +228,12 @@
       button.appendChild(el("span", "pill", String(tab.count)));
       button.addEventListener("click", function () {
         state.tab = tab.key;
+        if (tab.key !== ATTENDING) {
+          state.drill = { category: null, friendOf: null, location: null };
+        }
         buildTabs();
         renderCategoryBar();
+        renderViewSwitch();
         render();
       });
       els.tabs.appendChild(button);
@@ -295,7 +306,10 @@
   }
 
   function renderCategoryBar() {
-    if (state.tab !== ATTENDING) {
+    // Only the full list uses these chips. In the Overview the drill-down is
+    // the filter, and showing both meant two competing mechanisms with the
+    // chips silently doing nothing.
+    if (state.tab !== ATTENDING || state.view !== "list") {
       els.categoryBar.hidden = true;
       return;
     }
@@ -406,7 +420,7 @@
 
     var save = el("button", "btn btn-primary btn-small", "Save");
     save.type = "button";
-    var note = el("span", "cat-saved");
+    var note = el("span", "cat-editor-note");
     if (saved.updated_at) note.textContent = "saved";
 
     save.addEventListener("click", function () {
@@ -451,6 +465,8 @@
   // ------------------------------------------------------- move to attending
   function openMoveDialog(party, members) {
     var total = members.reduce(function (n, m) { return n + m.people_count; }, 0);
+    els.modalTitle.textContent = "Move to Attending?";
+    els.modalConfirm.textContent = "Confirm move";
     els.modalBody.textContent = "";
 
     var lead = el("p", "modal-lead");
@@ -566,6 +582,550 @@
     if (event.key === "Escape" && !els.modal.hidden) closeModal();
   });
 
+  // ------------------------------------------- attending overview (L1-L3)
+  /* The overview answers "how are the 242 distributed?" in one screen. Guest
+   * cards only appear once a category is chosen, so nothing here scrolls past
+   * a few hundred pixels until you ask it to. */
+  var CATEGORY_DEFS = [
+    { key: "Family", label: "Family", cls: "is-family",
+      subKind: "family_location" },
+    { key: "Friend", label: "Friends", cls: "is-friends",
+      subKind: "friend_of" },
+    { key: "Musician", label: "Musicians", cls: "is-musicians", subKind: null },
+    { key: "Other", label: "Other", cls: "is-other", subKind: null },
+    { key: "__none__", label: "Uncategorised", cls: "is-none", subKind: null }
+  ];
+
+  var UNSPECIFIED = "Unspecified";
+
+  function loadView() {
+    try {
+      return window.localStorage.getItem("attendingView") === "list"
+        ? "list" : "overview";
+    } catch (e) {
+      return "overview";
+    }
+  }
+
+  function saveView(view) {
+    try {
+      window.localStorage.setItem("attendingView", view);
+    } catch (e) { /* private mode or storage blocked -- not worth failing over */ }
+  }
+
+  function renderViewSwitch() {
+    var show = state.tab === ATTENDING;
+    els.viewSwitch.hidden = !show;
+    if (!show) return;
+    [].forEach.call(els.viewSwitch.querySelectorAll(".view-btn"), function (btn) {
+      var active = btn.getAttribute("data-view") === state.view;
+      btn.setAttribute("aria-pressed", String(active));
+      btn.classList.toggle("is-active", active);
+    });
+  }
+
+  function catKeyOf(party) {
+    return (party.category || {}).category || "__none__";
+  }
+
+  function statsFor(list) {
+    return {
+      parties: list.length,
+      people: list.reduce(function (n, p) { return n + p.attending_people; }, 0)
+    };
+  }
+
+  function statLine(stats) {
+    return stats.people + (stats.people === 1 ? " person" : " people") + " · " +
+           stats.parties + (stats.parties === 1 ? " party" : " parties");
+  }
+
+  /* Group a list of parties by one category field, preserving vocab order. */
+  function groupBy(list, field, order) {
+    var buckets = {};
+    list.forEach(function (p) {
+      var value = (p.category || {})[field] || UNSPECIFIED;
+      (buckets[value] = buckets[value] || []).push(p);
+    });
+    var keys = (order || []).filter(function (k) { return buckets[k]; });
+    Object.keys(buckets).forEach(function (k) {
+      if (keys.indexOf(k) === -1) keys.push(k);
+    });
+    return keys.map(function (k) {
+      return { label: k, parties: buckets[k], stats: statsFor(buckets[k]) };
+    });
+  }
+
+  function attendingPool() {
+    var query = state.query.trim().toLowerCase();
+    return state.data.parties.filter(function (p) {
+      if (p.attending_people <= 0) return false;
+      return !query || p.search_blob.indexOf(query) !== -1;
+    });
+  }
+
+  function drillMatches(party) {
+    var cat = party.category || {};
+    var d = state.drill;
+    if (d.category === "__none__") {
+      if (cat.category) return false;
+    } else if (d.category && cat.category !== d.category) {
+      return false;
+    }
+    if (d.friendOf && (cat.friend_of || UNSPECIFIED) !== d.friendOf) return false;
+    if (d.location) {
+      var loc = d.category === "Family" ? cat.family_location : cat.friend_location;
+      if ((loc || UNSPECIFIED) !== d.location) return false;
+    }
+    return true;
+  }
+
+  function setDrill(category, friendOf, location) {
+    state.drill = { category: category, friendOf: friendOf, location: location };
+    render();
+  }
+
+  // ------------------------------------------------------------ level 1
+  function categoryCard(def, stats, members) {
+    var card = el("button", "cat-card " + def.cls);
+    card.type = "button";
+    if (state.drill.category === def.key) card.classList.add("is-open");
+    card.setAttribute("aria-pressed", String(state.drill.category === def.key));
+
+    card.appendChild(el("span", "cat-card-label", def.label));
+    card.appendChild(el("span", "cat-card-people", String(stats.people)));
+    card.appendChild(el("span", "cat-card-unit",
+      stats.people === 1 ? "person" : "people"));
+    card.appendChild(el("span", "cat-card-parties",
+      stats.parties + (stats.parties === 1 ? " party" : " parties")));
+
+    // the subcategory split, inline, so level 1 alone tells the story
+    if (def.subKind && stats.people) {
+      var order = def.subKind === "friend_of"
+        ? state.data.vocab.friend_of
+        : state.data.vocab.family_locations;
+      var subs = groupBy(members, def.subKind, order);
+      var list = el("span", "cat-card-subs");
+      subs.forEach(function (sub) {
+        var row = el("span", "cat-sub-row");
+        row.appendChild(el("span", "cat-sub-name", sub.label));
+        row.appendChild(el("span", "cat-sub-val", String(sub.stats.people)));
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    } else if (stats.people) {
+      card.appendChild(el("span", "cat-card-hint", "no sub-groups"));
+    }
+
+    card.addEventListener("click", function () {
+      setDrill(state.drill.category === def.key ? null : def.key, null, null);
+    });
+    return card;
+  }
+
+  // ------------------------------------------------------------ level 2
+  function subTile(label, stats, active, onClick) {
+    var tile = el("button", "sub-tile" + (active ? " is-active" : ""));
+    tile.type = "button";
+    tile.setAttribute("aria-pressed", String(active));
+    tile.appendChild(el("span", "sub-tile-name", label));
+    tile.appendChild(el("span", "sub-tile-stats", statLine(stats)));
+    tile.addEventListener("click", onClick);
+    return tile;
+  }
+
+  function subSection(title, tiles, cls) {
+    var wrap = el("section", "sub-section " + (cls || ""));
+    wrap.appendChild(el("h4", "sub-section-title", title));
+    var row = el("div", "sub-row");
+    tiles.forEach(function (t) { row.appendChild(t); });
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  // -------------------------------------------------------- breadcrumb
+  function breadcrumb() {
+    var bar = el("nav", "crumbs");
+    bar.setAttribute("aria-label", "Breadcrumb");
+
+    function crumb(label, onClick, isLast) {
+      if (isLast) {
+        bar.appendChild(el("span", "crumb crumb-current", label));
+        return;
+      }
+      var btn = el("button", "crumb crumb-link", label);
+      btn.type = "button";
+      btn.addEventListener("click", onClick);
+      bar.appendChild(btn);
+      bar.appendChild(el("span", "crumb-sep", "›"));
+    }
+
+    var d = state.drill;
+    var def = CATEGORY_DEFS.filter(function (x) { return x.key === d.category; })[0];
+    var last = !d.friendOf && !d.location;
+
+    crumb("Attending", function () { setDrill(null, null, null); }, !d.category);
+    if (def) crumb(def.label, function () { setDrill(d.category, null, null); }, last);
+    if (d.friendOf) {
+      crumb(d.friendOf, function () { setDrill(d.category, d.friendOf, null); },
+            !d.location);
+    }
+    if (d.location) crumb(d.location, null, true);
+
+    var showAll = el("button", "btn btn-ghost btn-small crumbs-all",
+                     "Show all attending");
+    showAll.type = "button";
+    showAll.addEventListener("click", function () {
+      state.view = "list";
+      saveView("list");
+      renderViewSwitch();
+      renderCategoryBar();
+      render();
+    });
+    bar.appendChild(showAll);
+    return bar;
+  }
+
+  // ---------------------------------------------------- guest card bits
+  /* The colour class for a party, so every card, chip and tile that shows a
+   * category uses that one category colour -- never a shade per person. */
+  function catClassFor(party) {
+    var key = (party.category || {}).category || "__none__";
+    var def = CATEGORY_DEFS.filter(function (d) { return d.key === key; })[0];
+    return def ? def.cls : "is-none";
+  }
+
+  /* "Friend · Ram · Outside NC" -- the whole categorisation as one readable
+   * label, so a categorised card can be scanned without any controls on it. */
+  function categoryText(party) {
+    var cat = party.category || {};
+    if (!cat.category) return "Uncategorised";
+    var parts = [cat.category];
+    if (cat.category === "Friend") {
+      if (cat.friend_of) parts.push(cat.friend_of);
+      if (cat.friend_location) parts.push(cat.friend_location);
+    } else if (cat.category === "Family" && cat.family_location) {
+      parts.push(cat.family_location);
+    }
+    return parts.join(" · ");
+  }
+
+  function savedLabel(party) {
+    var cat = (party.category || {}).category;
+    return el("span", "cat-saved" + (cat ? "" : " cat-saved-empty"),
+              categoryText(party));
+  }
+
+  /* Collapsed by default: the saved label plus a small Edit action. The
+   * dropdowns only exist once Edit is pressed, and saving re-renders, which
+   * collapses the card again. */
+  function categoryControl(party) {
+    var hasCategory = !!(party.category || {}).category;
+    var wrap = el("div", "cat-control " + catClassFor(party));
+
+    var row = el("div", "cat-control-row");
+    row.appendChild(savedLabel(party));
+
+    var toggle = el("button", "btn btn-ghost btn-small",
+                    hasCategory ? "Edit" : "Categorise");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "false");
+    row.appendChild(toggle);
+    wrap.appendChild(row);
+
+    var drawer = el("div", "cat-drawer");
+    drawer.hidden = true;
+    toggle.addEventListener("click", function () {
+      drawer.hidden = !drawer.hidden;
+      toggle.setAttribute("aria-expanded", String(!drawer.hidden));
+      toggle.textContent = drawer.hidden
+        ? (hasCategory ? "Edit" : "Categorise")
+        : "Cancel";
+      if (!drawer.hidden && !drawer.childNodes.length) {
+        drawer.appendChild(categoryEditor(party));
+      }
+    });
+    wrap.appendChild(drawer);
+    return wrap;
+  }
+
+  /* Compact card used at level 3. The category editor lives in a drawer so a
+   * party can be re-categorised without leaving the drill-down. */
+  function guestCard(party) {
+    var card = el("article", "pcard " + catClassFor(party));
+
+    var head = el("div", "pcard-head");
+    head.appendChild(el("h4", "pcard-name", party.name));
+    head.appendChild(el("span", "pcard-count",
+      party.attending_people + (party.attending_people === 1 ? " person" : " people")));
+    card.appendChild(head);
+
+    if (party.is_group) {
+      card.appendChild(el("p", "pcard-meta", party.member_count + " in party"));
+    }
+
+    card.appendChild(categoryControl(party));
+
+    var undo = undoButton(party);
+    if (undo) {
+      var row = el("div", "pcard-actions");
+      row.appendChild(undo);
+      card.appendChild(row);
+    }
+    return card;
+  }
+
+  // ------------------------------------------------------------ level 3
+  function guestList(parties) {
+    var wrap = el("section", "drill-list");
+    var stats = statsFor(parties);
+    var head = el("div", "drill-head");
+    head.appendChild(el("h3", "drill-title", "Guests"));
+    head.appendChild(el("p", "drill-stats", statLine(stats)));
+    wrap.appendChild(head);
+
+    if (!parties.length) {
+      wrap.appendChild(el("p", "bucket-empty", "No attending guests here."));
+      return wrap;
+    }
+    var grid = el("div", "drill-grid");
+    parties.forEach(function (p) { grid.appendChild(guestCard(p)); });
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  function renderOverview() {
+    els.overview.textContent = "";
+    var pool = attendingPool();
+    var d = state.drill;
+
+    // ---- level 1: always visible, always the whole picture
+    var total = statsFor(pool);
+    var header = el("div", "ov-head");
+    header.appendChild(el("h2", "ov-title", "Attending by category"));
+    header.appendChild(el("p", "ov-sub",
+      statLine(total) + " · counts are people, not cards. Pick a category to drill in."));
+    els.overview.appendChild(header);
+
+    var grid = el("div", "cat-grid");
+    CATEGORY_DEFS.forEach(function (def) {
+      var members = pool.filter(function (p) { return catKeyOf(p) === def.key; });
+      grid.appendChild(categoryCard(def, statsFor(members), members));
+    });
+    els.overview.appendChild(grid);
+
+    if (!d.category) {
+      var hint = el("p", "ov-hint",
+        "Choose a category above to see its sub-groups and guests. "
+        + "Nothing is loaded below until you do, so this stays a five-second read.");
+      els.overview.appendChild(hint);
+      els.count.textContent = statLine(total);
+      return;
+    }
+
+    els.overview.appendChild(breadcrumb());
+
+    // ---- level 2: sub-groups for the chosen category
+    var inCategory = pool.filter(function (p) { return catKeyOf(p) === d.category; });
+
+    if (d.category === "Friend") {
+      var whoTiles = groupBy(inCategory, "friend_of",
+                             state.data.vocab.friend_of).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label + "'s friends",
+                       g.stats, d.friendOf === g.label,
+                       function () {
+                         setDrill(d.category,
+                                  d.friendOf === g.label ? null : g.label, null);
+                       });
+      });
+      if (whoTiles.length) els.overview.appendChild(subSection("Whose friend", whoTiles, "is-friends"));
+
+      var forLocation = d.friendOf
+        ? inCategory.filter(function (p) {
+            return ((p.category || {}).friend_of || UNSPECIFIED) === d.friendOf;
+          })
+        : inCategory;
+      var locTiles = groupBy(forLocation, "friend_location",
+                             state.data.vocab.friend_locations).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label,
+                       g.stats, d.location === g.label,
+                       function () {
+                         setDrill(d.category, d.friendOf,
+                                  d.location === g.label ? null : g.label);
+                       });
+      });
+      if (locTiles.length) els.overview.appendChild(subSection("Location", locTiles, "is-friends"));
+
+    } else if (d.category === "Family") {
+      var famTiles = groupBy(inCategory, "family_location",
+                             state.data.vocab.family_locations).map(function (g) {
+        return subTile(g.label === UNSPECIFIED ? "Not said" : g.label,
+                       g.stats, d.location === g.label,
+                       function () {
+                         setDrill(d.category, null,
+                                  d.location === g.label ? null : g.label);
+                       });
+      });
+      if (famTiles.length) els.overview.appendChild(subSection("Family location", famTiles, "is-family"));
+    }
+
+    // ---- level 3: the guests themselves
+    var shown = pool.filter(drillMatches);
+    els.overview.appendChild(guestList(shown));
+    els.count.textContent = statLine(statsFor(shown));
+  }
+
+  // ------------------------------------------------- undo a manual move
+  function movedMembers(party) {
+    return party.members.filter(function (m) {
+      return m.moved && m.status === ATTENDING;
+    });
+  }
+
+  function undoButton(party) {
+    var moved = movedMembers(party);
+    if (!moved.length) return null;
+    var btn = el("button", "btn btn-undo btn-small",
+      moved.length === 1 ? "Change status / undo move"
+                         : "Change status / undo " + moved.length + " moves");
+    btn.type = "button";
+    btn.addEventListener("click", function () {
+      openUndoDialog(party, moved);
+    });
+    return btn;
+  }
+
+  function openUndoDialog(party, moved) {
+    els.modalTitle.textContent = "Undo move back to the original status?";
+    els.modalConfirm.textContent = "Confirm undo";
+    els.modalBody.textContent = "";
+
+    var lead = el("p", "modal-lead");
+    lead.appendChild(document.createTextNode("Return "));
+    lead.appendChild(el("strong", null, party.name));
+    lead.appendChild(document.createTextNode(
+      moved.length === 1 ? " to its original status?"
+                         : " to their original statuses?"));
+    els.modalBody.appendChild(lead);
+
+    els.modalBody.appendChild(el("p", "modal-note",
+      "This undoes a manual move only. The record goes back to exactly what the "
+      + "source CSV said, its confirmed headcount is dropped, and the reversal is "
+      + "written to the audit log. Nothing else in this party is touched."));
+
+    var rows = [];
+    moved.forEach(function (member) {
+      var row = el("div", "move-row");
+      var head = el("p", "move-row-head");
+      head.appendChild(el("strong", null, member.full_name));
+      head.appendChild(el("span", "move-row-label", member.guest_label));
+      row.appendChild(head);
+
+      var facts = el("dl", "move-facts");
+      [["Originally", member.source_status],
+       ["Current status", member.status],
+       ["Confirmed attending", member.people_count],
+       ["Reverting to", member.source_status]].forEach(function (pair) {
+        facts.appendChild(el("dt", null, pair[0]));
+        facts.appendChild(el("dd", null, String(pair[1])));
+      });
+      row.appendChild(facts);
+
+      var pick = el("label", "undo-pick");
+      var box = el("input");
+      box.type = "checkbox";
+      box.checked = true;
+      pick.appendChild(box);
+      pick.appendChild(el("span", null, "Undo this one"));
+      row.appendChild(pick);
+
+      els.modalBody.appendChild(row);
+      rows.push({ member: member, box: box });
+    });
+
+    // The category sits on the party, so only offer to clear it when the
+    // reversal leaves nobody in this party attending. Otherwise clearing it
+    // would strip the category from members who never moved.
+    var catBox = null;
+    function refreshCategoryPrompt() {
+      var going = rows.filter(function (r) { return r.box.checked; })
+                      .reduce(function (n, r) { return n + r.member.people_count; }, 0);
+      var leaves = party.attending_people - going;
+      var show = leaves <= 0 && (party.category || {}).category;
+      if (catQuestion) catQuestion.hidden = !show;
+      if (remainNote) {
+        remainNote.textContent = leaves > 0
+          ? leaves + (leaves === 1 ? " person" : " people") +
+            " in this party stay attending, so the category is kept."
+          : "";
+        remainNote.hidden = leaves <= 0;
+      }
+    }
+
+    var catQuestion = el("div", "undo-category");
+    var catLabel = el("label", "undo-pick");
+    catBox = el("input");
+    catBox.type = "checkbox";
+    catLabel.appendChild(catBox);
+    catLabel.appendChild(el("span", null,
+      "Also remove this party's category (" +
+      ((party.category || {}).category || "none") + ")"));
+    catQuestion.appendChild(catLabel);
+    catQuestion.appendChild(el("p", "undo-hint",
+      "Leave unticked to keep the categorisation for later."));
+    catQuestion.hidden = true;
+    els.modalBody.appendChild(catQuestion);
+
+    var remainNote = el("p", "undo-hint");
+    remainNote.hidden = true;
+    els.modalBody.appendChild(remainNote);
+
+    rows.forEach(function (r) {
+      r.box.addEventListener("change", refreshCategoryPrompt);
+    });
+    refreshCategoryPrompt();
+
+    els.modal.hidden = false;
+    els.modalConfirm.disabled = false;
+    els.modalConfirm.focus();
+
+    els.modalConfirm.onclick = function () {
+      var chosen = rows.filter(function (r) { return r.box.checked; });
+      if (!chosen.length) {
+        toast("Nothing selected to undo.", true);
+        return;
+      }
+      els.modalConfirm.disabled = true;
+      var removeCategory = !catQuestion.hidden && catBox.checked;
+
+      // one request per record; the category question rides on the last
+      var chain = Promise.resolve(null);
+      chosen.forEach(function (r, index) {
+        chain = chain.then(function () {
+          return post("/api/revert", {
+            record_key: r.member.record_key,
+            remove_category: removeCategory && index === chosen.length - 1
+          });
+        });
+      });
+
+      chain.then(function (body) {
+        closeModal();
+        state.data.summary = body.summary;
+        replaceParty(body.party);
+        paintSummary(body.summary);
+        buildTabs();
+        renderCategoryBar();
+        render();
+        toast(party.name + " returned to " + body.reverted_to +
+              (body.category_removed ? " · category removed" : ""));
+      }).catch(function (err) {
+        els.modalConfirm.disabled = false;
+        toast(err.message, true);
+      });
+    };
+  }
+
   // ------------------------------------------------------------- party
   function renderParty(party, activeStatus) {
     var headline = activeStatus
@@ -608,7 +1168,13 @@
 
     var footer = el("div", "party-actions");
     if (activeStatus === ATTENDING) {
-      footer.appendChild(categoryEditor(party));
+      footer.appendChild(categoryControl(party));
+      var undoHere = undoButton(party);
+      if (undoHere) {
+        var undoRow = el("div", "party-undo");
+        undoRow.appendChild(undoHere);
+        footer.appendChild(undoRow);
+      }
       card.appendChild(footer);
     } else if (activeStatus) {
       // Only the members carrying THIS status can move. A part-attending
@@ -698,16 +1264,25 @@
   function render() {
     if (state.tab === REVIEW_TAB) {
       els.categoryBar.hidden = true;
+      els.overview.hidden = true;
       renderReview();
       return;
     }
 
     els.review.hidden = true;
-    els.results.hidden = false;
     els.toolbar.hidden = false;
     els.results.textContent = "";
 
     var activeStatus = state.tab === ALL_TAB ? null : state.tab;
+
+    if (activeStatus === ATTENDING && state.view === "overview") {
+      els.results.hidden = true;
+      els.overview.hidden = false;
+      renderOverview();
+      return;
+    }
+    els.overview.hidden = true;
+    els.results.hidden = false;
     var query = state.query.trim().toLowerCase();
 
     var matches = state.data.parties.filter(function (party) {
@@ -759,6 +1334,16 @@
     render();
   });
 
+  [].forEach.call(els.viewSwitch.querySelectorAll(".view-btn"), function (btn) {
+    btn.addEventListener("click", function () {
+      state.view = btn.getAttribute("data-view");
+      saveView(state.view);
+      renderViewSwitch();
+      renderCategoryBar();
+      render();
+    });
+  });
+
   els.contacts.addEventListener("change", function () {
     state.showContacts = els.contacts.checked;
     render();
@@ -777,8 +1362,10 @@
     .then(function (data) {
       state.data = data;
       state.flaggedNames = buildFlaggedNames(data.duplicates);
+      state.view = loadView();
       buildTabs();
       renderCategoryBar();
+      renderViewSwitch();
       render();
     })
     .catch(function (error) {

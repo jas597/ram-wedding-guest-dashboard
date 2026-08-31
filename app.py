@@ -262,20 +262,50 @@ def api_move():
 @app.route("/api/revert", methods=["POST"])
 @login_required
 def api_revert():
-    """Undo a move, returning the row to its original CSV status."""
+    """Undo a manual move, returning the row to its original CSV status.
+
+    Record-level, like the move it undoes: a party that was part attending
+    before the move stays that way afterwards. The categorisation is party
+    level, so it is only offered for removal when the reversal leaves the
+    party with nobody attending -- otherwise removing it would strip the
+    category from members who never moved.
+    """
     body = request.get_json(silent=True) or {}
     key = (body.get("record_key") or "").strip()
     parties, _ = current_data()
     by_key = {m["record_key"]: (p, m) for p in parties for m in p["members"]}
     if key not in by_key:
         return jsonify(error="Unknown record."), 404
+
     party, member = by_key[key]
-    store.revert_record(key, member["full_name"])
+    if not member["moved"]:
+        return jsonify(
+            error="%s was not moved manually, so there is nothing to undo."
+                  % member["full_name"]), 409
+
+    result = store.revert_record(key, member["full_name"])
+    if not result.get("reverted"):
+        return jsonify(error="No saved override for that record."), 409
+
+    # Recompute before deciding anything about the category.
     parties, summary = current_data()
+    updated = _find_party(parties, party["party_key"])
+    still_attending = updated["attending_people"] if updated else 0
+
+    category_removed = False
+    if body.get("remove_category") and not still_attending:
+        store.save_category(party["party_key"], party["name"], {})
+        category_removed = True
+        parties, summary = current_data()
+        updated = _find_party(parties, party["party_key"])
+
     return jsonify({
         "ok": True,
-        "party": _find_party(parties, party["party_key"]),
+        "reverted_to": member["source_status"],
+        "party": updated,
         "summary": summary,
+        "still_attending": still_attending,
+        "category_removed": category_removed,
     })
 
 
