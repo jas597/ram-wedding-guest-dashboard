@@ -417,7 +417,7 @@
 
     var save = el("button", "btn btn-primary btn-small", "Save");
     save.type = "button";
-    var note = el("span", "cat-saved");
+    var note = el("span", "cat-editor-note");
     if (saved.updated_at) note.textContent = "saved";
 
     save.addEventListener("click", function () {
@@ -584,13 +584,13 @@
    * cards only appear once a category is chosen, so nothing here scrolls past
    * a few hundred pixels until you ask it to. */
   var CATEGORY_DEFS = [
-    { key: "Family", label: "Family", cls: "cat-family",
+    { key: "Family", label: "Family", cls: "is-family",
       subKind: "family_location" },
-    { key: "Friend", label: "Friends", cls: "cat-friends",
+    { key: "Friend", label: "Friends", cls: "is-friends",
       subKind: "friend_of" },
-    { key: "Musician", label: "Musicians", cls: "cat-musicians", subKind: null },
-    { key: "Other", label: "Other", cls: "cat-other", subKind: null },
-    { key: "__none__", label: "Uncategorised", cls: "cat-none", subKind: null }
+    { key: "Musician", label: "Musicians", cls: "is-musicians", subKind: null },
+    { key: "Other", label: "Other", cls: "is-other", subKind: null },
+    { key: "__none__", label: "Uncategorised", cls: "is-none", subKind: null }
   ];
 
   var UNSPECIFIED = "Unspecified";
@@ -731,8 +731,8 @@
     return tile;
   }
 
-  function subSection(title, tiles) {
-    var wrap = el("section", "sub-section");
+  function subSection(title, tiles, cls) {
+    var wrap = el("section", "sub-section " + (cls || ""));
     wrap.appendChild(el("h4", "sub-section-title", title));
     var row = el("div", "sub-row");
     tiles.forEach(function (t) { row.appendChild(t); });
@@ -783,30 +783,72 @@
   }
 
   // ---------------------------------------------------- guest card bits
-  /* Category plus its follow-up answers, as small chips. */
-  function categoryChips(party) {
-    var wrap = el("div", "cat-chips");
+  /* The colour class for a party, so every card, chip and tile that shows a
+   * category uses that one category colour -- never a shade per person. */
+  function catClassFor(party) {
+    var key = (party.category || {}).category || "__none__";
+    var def = CATEGORY_DEFS.filter(function (d) { return d.key === key; })[0];
+    return def ? def.cls : "is-none";
+  }
+
+  /* "Friend · Ram · Outside NC" -- the whole categorisation as one readable
+   * label, so a categorised card can be scanned without any controls on it. */
+  function categoryText(party) {
     var cat = party.category || {};
-    if (!cat.category) {
-      wrap.appendChild(el("span", "cat-chip cat-chip-none", "Uncategorised"));
-      return wrap;
-    }
-    wrap.appendChild(el("span", "cat-chip cat-chip-main", cat.category));
+    if (!cat.category) return "Uncategorised";
+    var parts = [cat.category];
     if (cat.category === "Friend") {
-      if (cat.friend_of) wrap.appendChild(el("span", "cat-chip", cat.friend_of));
-      if (cat.friend_location) {
-        wrap.appendChild(el("span", "cat-chip", cat.friend_location));
-      }
+      if (cat.friend_of) parts.push(cat.friend_of);
+      if (cat.friend_location) parts.push(cat.friend_location);
     } else if (cat.category === "Family" && cat.family_location) {
-      wrap.appendChild(el("span", "cat-chip", cat.family_location));
+      parts.push(cat.family_location);
     }
+    return parts.join(" · ");
+  }
+
+  function savedLabel(party) {
+    var cat = (party.category || {}).category;
+    return el("span", "cat-saved" + (cat ? "" : " cat-saved-empty"),
+              categoryText(party));
+  }
+
+  /* Collapsed by default: the saved label plus a small Edit action. The
+   * dropdowns only exist once Edit is pressed, and saving re-renders, which
+   * collapses the card again. */
+  function categoryControl(party) {
+    var hasCategory = !!(party.category || {}).category;
+    var wrap = el("div", "cat-control " + catClassFor(party));
+
+    var row = el("div", "cat-control-row");
+    row.appendChild(savedLabel(party));
+
+    var toggle = el("button", "btn btn-ghost btn-small",
+                    hasCategory ? "Edit" : "Categorise");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "false");
+    row.appendChild(toggle);
+    wrap.appendChild(row);
+
+    var drawer = el("div", "cat-drawer");
+    drawer.hidden = true;
+    toggle.addEventListener("click", function () {
+      drawer.hidden = !drawer.hidden;
+      toggle.setAttribute("aria-expanded", String(!drawer.hidden));
+      toggle.textContent = drawer.hidden
+        ? (hasCategory ? "Edit" : "Categorise")
+        : "Cancel";
+      if (!drawer.hidden && !drawer.childNodes.length) {
+        drawer.appendChild(categoryEditor(party));
+      }
+    });
+    wrap.appendChild(drawer);
     return wrap;
   }
 
   /* Compact card used at level 3. The category editor lives in a drawer so a
    * party can be re-categorised without leaving the drill-down. */
   function guestCard(party) {
-    var card = el("article", "pcard");
+    var card = el("article", "pcard " + catClassFor(party));
 
     var head = el("div", "pcard-head");
     head.appendChild(el("h4", "pcard-name", party.name));
@@ -814,34 +856,18 @@
       party.attending_people + (party.attending_people === 1 ? " person" : " people")));
     card.appendChild(head);
 
-    card.appendChild(categoryChips(party));
-
     if (party.is_group) {
       card.appendChild(el("p", "pcard-meta", party.member_count + " in party"));
     }
 
-    var actions = el("div", "pcard-actions");
-
-    var edit = el("button", "btn btn-ghost btn-small", "Categorise");
-    edit.type = "button";
-    edit.setAttribute("aria-expanded", "false");
-    var drawer = el("div", "pcard-drawer");
-    drawer.hidden = true;
-    edit.addEventListener("click", function () {
-      drawer.hidden = !drawer.hidden;
-      edit.setAttribute("aria-expanded", String(!drawer.hidden));
-      edit.textContent = drawer.hidden ? "Categorise" : "Close";
-      if (!drawer.hidden && !drawer.childNodes.length) {
-        drawer.appendChild(categoryEditor(party));
-      }
-    });
-    actions.appendChild(edit);
+    card.appendChild(categoryControl(party));
 
     var undo = undoButton(party);
-    if (undo) actions.appendChild(undo);
-
-    card.appendChild(actions);
-    card.appendChild(drawer);
+    if (undo) {
+      var row = el("div", "pcard-actions");
+      row.appendChild(undo);
+      card.appendChild(row);
+    }
     return card;
   }
 
@@ -908,7 +934,7 @@
                                   d.friendOf === g.label ? null : g.label, null);
                        });
       });
-      if (whoTiles.length) els.overview.appendChild(subSection("Whose friend", whoTiles));
+      if (whoTiles.length) els.overview.appendChild(subSection("Whose friend", whoTiles, "is-friends"));
 
       var forLocation = d.friendOf
         ? inCategory.filter(function (p) {
@@ -924,7 +950,7 @@
                                   d.location === g.label ? null : g.label);
                        });
       });
-      if (locTiles.length) els.overview.appendChild(subSection("Location", locTiles));
+      if (locTiles.length) els.overview.appendChild(subSection("Location", locTiles, "is-friends"));
 
     } else if (d.category === "Family") {
       var famTiles = groupBy(inCategory, "family_location",
@@ -936,7 +962,7 @@
                                   d.location === g.label ? null : g.label);
                        });
       });
-      if (famTiles.length) els.overview.appendChild(subSection("Family location", famTiles));
+      if (famTiles.length) els.overview.appendChild(subSection("Family location", famTiles, "is-family"));
     }
 
     // ---- level 3: the guests themselves
@@ -1138,7 +1164,7 @@
 
     var footer = el("div", "party-actions");
     if (activeStatus === ATTENDING) {
-      footer.appendChild(categoryEditor(party));
+      footer.appendChild(categoryControl(party));
       var undoHere = undoButton(party);
       if (undoHere) {
         var undoRow = el("div", "party-undo");

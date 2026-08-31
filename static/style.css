@@ -832,17 +832,50 @@ body {
 .cat-sub-name { color: var(--slate); overflow-wrap: anywhere; }
 .cat-sub-val { font-weight: 700; color: var(--ink); }
 
-/* Muted, distinct category colours -- readable at a glance, not a paint chart. */
-.cat-family    { border-top-color: #b8860b; }
-.cat-family .cat-card-label, .cat-family .cat-card-people { color: #8a6508; }
-.cat-friends   { border-top-color: #2c548a; }
-.cat-friends .cat-card-label, .cat-friends .cat-card-people { color: #24466f; }
-.cat-musicians { border-top-color: #6f4b86; }
-.cat-musicians .cat-card-label, .cat-musicians .cat-card-people { color: #5d3f72; }
-.cat-other     { border-top-color: #2f7a72; }
-.cat-other .cat-card-label, .cat-other .cat-card-people { color: #26635c; }
-.cat-none      { border-top-color: #b4bcc7; }
-.cat-none .cat-card-label, .cat-none .cat-card-people { color: #6a778a; }
+/* ONE colour per category, declared once. Every card, tile, chip and label
+   that represents a category inherits these three variables, so Family is the
+   same gold everywhere and no individual guest gets a shade of their own. */
+.is-family    { --cat-ink: #8a6508; --cat-strong: #b8860b; --cat-tint: #fdf7e8; --cat-line: #e8d5a6; }
+.is-friends   { --cat-ink: #24466f; --cat-strong: #2c548a; --cat-tint: #eef3fa; --cat-line: #c8d9ee; }
+.is-musicians { --cat-ink: #5d3f72; --cat-strong: #6f4b86; --cat-tint: #f5f0f8; --cat-line: #ddd0e4; }
+.is-other     { --cat-ink: #26635c; --cat-strong: #2f7a72; --cat-tint: #edf6f5; --cat-line: #c3ded9; }
+.is-none      { --cat-ink: #6a778a; --cat-strong: #b4bcc7; --cat-tint: #f4f6f8; --cat-line: #dbe2eb; }
+
+.cat-card { border-top-color: var(--cat-strong, var(--slate)); }
+.cat-card .cat-card-label,
+.cat-card .cat-card-people { color: var(--cat-ink, var(--ink)); }
+
+/* saved state: the whole categorisation as one coloured label */
+.cat-control { display: flex; flex-direction: column; gap: 9px; }
+
+.cat-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.cat-saved {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--cat-ink, var(--slate));
+  background: var(--cat-tint, var(--page));
+  border: 1px solid var(--cat-line, var(--line));
+  overflow-wrap: anywhere;
+}
+
+.cat-saved-empty { font-weight: 600; font-style: italic; }
+
+.cat-drawer { border-top: 1px dashed var(--line); padding-top: 10px; }
+.cat-drawer .cat-editor { flex-direction: column; align-items: stretch; }
+.cat-drawer .cat-field { width: 100%; }
+.cat-drawer select { width: 100%; min-width: 0; }
 
 /* breadcrumb */
 .crumbs {
@@ -888,6 +921,8 @@ body {
 .sub-row { display: flex; flex-wrap: wrap; gap: 9px; }
 
 .sub-tile {
+  background: var(--cat-tint, var(--surface));
+  border-color: var(--cat-line, var(--line));
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -902,12 +937,15 @@ body {
   cursor: pointer;
 }
 
-.sub-tile:hover { border-color: var(--navy-soft); }
-.sub-tile.is-active { background: var(--navy); border-color: var(--navy); }
+.sub-tile:hover { border-color: var(--cat-strong, var(--navy-soft)); }
+.sub-tile.is-active {
+  background: var(--cat-strong, var(--navy));
+  border-color: var(--cat-strong, var(--navy));
+}
 .sub-tile.is-active .sub-tile-name,
 .sub-tile.is-active .sub-tile-stats { color: #fff; }
 
-.sub-tile-name { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.sub-tile-name { font-size: 13.5px; font-weight: 700; color: var(--cat-ink, var(--ink)); }
 .sub-tile-stats { font-size: 12px; color: var(--slate); }
 
 /* level 3 -- the guests */
@@ -940,6 +978,7 @@ body {
 .pcard {
   background: var(--surface);
   border: 1px solid var(--line);
+  border-left: 3px solid var(--cat-strong, var(--line));
   border-radius: 8px;
   padding: 11px 12px;
 }
@@ -969,26 +1008,8 @@ body {
 
 .pcard-meta { margin: 6px 0 0; font-size: 11.5px; color: var(--slate); }
 
-.cat-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-
-.cat-chip {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: var(--page);
-  color: var(--slate);
-  border: 1px solid var(--line);
-}
-
-.cat-chip-main { font-weight: 700; color: var(--ink); background: #eef2f7; }
-.cat-chip-none { font-style: italic; }
-
-.pcard-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.pcard-drawer { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
-.pcard-drawer .cat-editor { flex-direction: column; align-items: stretch; }
-.pcard-drawer .cat-field { width: 100%; }
-.pcard-drawer select { width: 100%; min-width: 0; }
+.pcard .cat-control { margin-top: 9px; }
+.pcard-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 
 /* -------------------------------------------------- undo a move */
 .btn-undo {
@@ -1062,7 +1083,7 @@ body {
 .cat-editor select:focus-visible,
 .move-num input:focus-visible { outline: 2px solid var(--navy-soft); outline-offset: 1px; }
 
-.cat-saved { font-size: 12.5px; color: var(--green); font-weight: 600; }
+.cat-editor-note { font-size: 12.5px; color: var(--green); font-weight: 600; }
 
 .moved-flag {
   font-size: 11px;
@@ -1198,6 +1219,9 @@ body {
   .cat-card-people { font-size: 28px; }
   .cat-card-subs { margin-top: 8px; }
   .drill-grid { grid-template-columns: 1fr; }
+  .cat-control-row { flex-direction: column; align-items: stretch; }
+  .cat-control-row .btn { width: 100%; }
+  .cat-saved { justify-content: center; text-align: center; }
   .sub-row { flex-direction: column; }
   .sub-tile { width: 100%; min-width: 0; }
   .crumbs { gap: 4px; }

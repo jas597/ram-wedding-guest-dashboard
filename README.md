@@ -200,6 +200,39 @@ re-counts every level and relocates the party immediately, with no reload.
 
 **Full List** is the detailed view with contacts, messages and status filters.
 
+### One colour per category
+
+Each category owns exactly one colour, declared once in `style.css` as three CSS
+variables on an `.is-*` class:
+
+| Category | Colour |
+|---|---|
+| Family | warm gold |
+| Friends | blue |
+| Musicians | purple |
+| Other | teal |
+| Uncategorised | neutral grey |
+
+Every element that represents a category -- the level 1 card, its sub-group
+tiles, a guest card's left edge and its saved label -- inherits those variables,
+so Family is the same gold everywhere and no individual guest ever gets a shade
+of their own.
+
+### Collapsed category cards
+
+A categorised party shows its categorisation as one label in the category
+colour, and nothing else:
+
+```
+Prof. Balu Gokaraju                    4 people
+Family · India                            [Edit]
+```
+
+The dropdowns only exist after pressing **Edit**, and saving collapses the card
+back to the label. Uncategorised parties show an italic *Uncategorised* label and
+a **Categorise** button instead. This keeps a screen of guests scannable by
+colour and label rather than a wall of select boxes.
+
 ### Undoing a manual move
 
 An Attending record that was moved there manually carries a
