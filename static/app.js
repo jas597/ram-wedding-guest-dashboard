@@ -6,6 +6,7 @@
   "use strict";
 
   var REVIEW_TAB = "__review__";
+  var ROOMS_TAB = "__rooms__";
   var ALL_TAB = "__all__";
 
   var ATTENDING = "Attending";
@@ -21,13 +22,18 @@
     // "overview" (drill-down dashboard) or "list", Attending tab only
     view: "overview",
     // which category / sub-group the overview is drilled into
-    drill: { category: null, friendOf: null, location: null }
+    drill: { category: null, friendOf: null, location: null },
+    // room allocation tab
+    roomsPanelOpen: false,
+    roomQuery: "",
+    roomFilter: { category: "", friendOf: "", location: "" }
   };
 
   var els = {
     tabs: document.getElementById("tabs"),
     results: document.getElementById("results"),
     review: document.getElementById("review"),
+    rooms: document.getElementById("rooms"),
     toolbar: document.getElementById("toolbar"),
     search: document.getElementById("search"),
     clear: document.getElementById("clear-search"),
@@ -171,7 +177,11 @@
         throw new Error("signed out");
       }
       return response.json().then(function (body) {
-        if (!response.ok) throw new Error(body.error || ("HTTP " + response.status));
+        if (!response.ok) {
+          var err = new Error(body.error || ("HTTP " + response.status));
+          err.needsOverride = !!body.needs_override;
+          throw err;
+        }
         return body;
       });
     });
@@ -211,6 +221,12 @@
       if (row.entries > 0) {
         tabs.push({ key: row.status, label: row.status, count: row.people });
       }
+    });
+    tabs.push({
+      key: ROOMS_TAB,
+      label: "Room Allocation",
+      count: (state.data.rooms || {}).summary
+        ? state.data.rooms.summary.unallocated_people : 0
     });
     tabs.push({
       key: REVIEW_TAB,
@@ -1262,6 +1278,18 @@
 
   // ------------------------------------------------------------ render
   function render() {
+    if (state.tab === ROOMS_TAB) {
+      els.categoryBar.hidden = true;
+      els.overview.hidden = true;
+      els.review.hidden = true;
+      els.results.hidden = true;
+      els.toolbar.hidden = true;
+      els.rooms.hidden = false;
+      renderRooms();
+      return;
+    }
+    els.rooms.hidden = true;
+
     if (state.tab === REVIEW_TAB) {
       els.categoryBar.hidden = true;
       els.overview.hidden = true;
@@ -1315,6 +1343,490 @@
       fragment.appendChild(renderParty(party, activeStatus));
     });
     els.results.appendChild(fragment);
+  }
+
+  // ------------------------------------------------------ room allocation
+  /* Rooms reuse the category colours defined for the Attending overview --
+   * catClassFor() and the .is-* variables -- so a Family party is the same
+   * gold here as everywhere else. No new palette. */
+
+  function roomsData() {
+    return state.data.rooms || { rooms: [], parties: [], summary: {} };
+  }
+
+  function statTile(label, value, extra) {
+    var tile = el("div", "rstat" + (extra ? " " + extra : ""));
+    tile.appendChild(el("span", "rstat-label", label));
+    tile.appendChild(el("span", "rstat-value", String(value)));
+    return tile;
+  }
+
+  function roomSummaryStrip() {
+    var s = roomsData().summary;
+    var strip = el("div", "rstats");
+    strip.appendChild(statTile("Attending", s.attending_people));
+    strip.appendChild(statTile("Room required", s.required_people, "rstat-req"));
+    strip.appendChild(statTile("Allocated", s.allocated_people, "rstat-ok"));
+    strip.appendChild(statTile("Not allocated", s.unallocated_people, "rstat-warn"));
+    strip.appendChild(statTile("Rooms used", s.rooms_used + " / " + s.rooms_total));
+    strip.appendChild(statTile("Available capacity", s.available_capacity));
+    return strip;
+  }
+
+  /* --------------------------------------------------- manage rooms */
+  function roomForm(existing, onDone) {
+    var form = el("div", "room-form");
+    var fields = [
+      ["name", "Room number / name", "text", true],
+      ["property", "Hotel / property", "text", false],
+      ["room_type", "Room type", "text", false],
+      ["capacity", "Max capacity", "number", true],
+      ["notes", "Notes", "text", false]
+    ];
+    var inputs = {};
+    fields.forEach(function (f) {
+      var wrap = el("label", "room-field");
+      wrap.appendChild(el("span", "room-field-label", f[1]));
+      var input = el("input");
+      input.type = f[2];
+      if (f[2] === "number") { input.min = "1"; input.inputMode = "numeric"; }
+      if (existing) input.value = existing[f[0]] === null ? "" : String(existing[f[0]]);
+      wrap.appendChild(input);
+      inputs[f[0]] = input;
+      form.appendChild(wrap);
+    });
+
+    var actions = el("div", "room-form-actions");
+    var save = el("button", "btn btn-primary btn-small",
+                  existing ? "Save changes" : "Add room");
+    save.type = "button";
+    save.addEventListener("click", function () {
+      var payload = {
+        name: inputs.name.value,
+        property: inputs.property.value,
+        room_type: inputs.room_type.value,
+        capacity: inputs.capacity.value,
+        notes: inputs.notes.value
+      };
+      if (existing) payload.id = existing.id;
+      save.disabled = true;
+      post("/api/rooms", payload).then(function (body) {
+        state.data.rooms = body.rooms;
+        if (!existing) { inputs.name.value = ""; inputs.capacity.value = ""; }
+        toast(existing ? "Room updated." : "Room added.");
+        onDone();
+      }).catch(function (err) {
+        save.disabled = false;
+        if (err.needsOverride &&
+            window.confirm(err.message + "\n\nSave anyway?")) {
+          payload.allow_overflow = true;
+          post("/api/rooms", payload).then(function (body) {
+            state.data.rooms = body.rooms;
+            toast("Room updated, now over capacity.");
+            onDone();
+          }).catch(function (e2) { toast(e2.message, true); });
+        } else {
+          toast(err.message, true);
+        }
+      });
+    });
+    actions.appendChild(save);
+
+    if (existing) {
+      var cancel = el("button", "btn btn-ghost btn-small", "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", onDone);
+      actions.appendChild(cancel);
+    }
+    form.appendChild(actions);
+    return form;
+  }
+
+  function managePanel() {
+    var data = roomsData();
+    var panel = el("section", "manage");
+
+    var head = el("div", "manage-head");
+    var toggle = el("button", "btn btn-ghost btn-small",
+                    state.roomsPanelOpen ? "Close" : "Manage rooms");
+    toggle.type = "button";
+    toggle.addEventListener("click", function () {
+      state.roomsPanelOpen = !state.roomsPanelOpen;
+      renderRooms();
+    });
+    head.appendChild(el("h3", "manage-title", "Rooms"));
+    head.appendChild(el("p", "manage-sub",
+      data.rooms.length + (data.rooms.length === 1 ? " room" : " rooms") +
+      " · " + data.summary.total_capacity + " beds in total"));
+    head.appendChild(toggle);
+    panel.appendChild(head);
+
+    if (!state.roomsPanelOpen) return panel;
+
+    panel.appendChild(roomForm(null, function () { renderRooms(); }));
+
+    if (data.rooms.length) {
+      var list = el("ul", "manage-list");
+      data.rooms.forEach(function (r) {
+        var li = el("li", "manage-row");
+        var main = el("div", "manage-row-main");
+        main.appendChild(el("strong", null, r.name));
+        var bits = [];
+        if (r.property) bits.push(r.property);
+        if (r.room_type) bits.push(r.room_type);
+        bits.push("capacity " + r.capacity);
+        if (r.occupied) bits.push(r.occupied + " placed");
+        main.appendChild(el("span", "manage-row-meta", bits.join(" · ")));
+        if (r.notes) main.appendChild(el("span", "manage-row-notes", r.notes));
+        li.appendChild(main);
+
+        var edit = el("button", "btn btn-ghost btn-small", "Edit");
+        edit.type = "button";
+        var slot = el("div", "manage-edit");
+        slot.hidden = true;
+        edit.addEventListener("click", function () {
+          slot.hidden = !slot.hidden;
+          edit.textContent = slot.hidden ? "Edit" : "Close";
+          if (!slot.hidden && !slot.childNodes.length) {
+            slot.appendChild(roomForm(r, function () { renderRooms(); }));
+          }
+        });
+
+        var del = el("button", "btn btn-danger btn-small", "Delete");
+        del.type = "button";
+        del.addEventListener("click", function () {
+          var warn = r.occupied
+            ? r.name + " has " + r.occupied + " people in it. Deleting the room "
+              + "releases them back to Not Allocated.\n\nDelete anyway?"
+            : "Delete " + r.name + "?";
+          if (!window.confirm(warn)) return;
+          post("/api/rooms/delete", { id: r.id }).then(function (body) {
+            state.data.rooms = body.rooms;
+            toast(r.name + " deleted.");
+            renderRooms();
+          }).catch(function (err) { toast(err.message, true); });
+        });
+
+        var acts = el("div", "manage-row-actions");
+        acts.appendChild(edit);
+        acts.appendChild(del);
+        li.appendChild(acts);
+        li.appendChild(slot);
+        list.appendChild(li);
+      });
+      panel.appendChild(list);
+    }
+    return panel;
+  }
+
+  /* ------------------------------------------------------ room cards */
+  function roomCard(room) {
+    var card = el("article", "room-card"
+      + (room.over ? " is-over" : room.full ? " is-full" : ""));
+
+    var head = el("div", "room-head");
+    head.appendChild(el("h4", "room-name", room.name));
+    head.appendChild(el("span", "room-cap", "Capacity " + room.capacity));
+    card.appendChild(head);
+
+    if (room.property || room.room_type) {
+      card.appendChild(el("p", "room-meta",
+        [room.property, room.room_type].filter(Boolean).join(" · ")));
+    }
+
+    if (room.occupants.length) {
+      var list = el("ul", "room-occupants");
+      room.occupants.forEach(function (o) {
+        var li = el("li", "room-occupant " +
+          catClassFor({ category: o.category }));
+        li.appendChild(el("span", "occ-dot"));
+        li.appendChild(el("span", "occ-name", o.name));
+        li.appendChild(el("span", "occ-people", String(o.people)));
+        var drop = el("button", "occ-remove", "×");
+        drop.type = "button";
+        drop.title = "Remove " + o.name + " from " + room.name;
+        drop.setAttribute("aria-label", drop.title);
+        drop.addEventListener("click", function () {
+          post("/api/allocate", { party_key: o.party_key,
+                                  room_id: room.id, people: 0 })
+            .then(function (body) {
+              state.data.rooms = body.rooms;
+              toast(o.name + " removed from " + room.name);
+              renderRooms();
+            }).catch(function (err) { toast(err.message, true); });
+        });
+        li.appendChild(drop);
+        list.appendChild(li);
+      });
+      card.appendChild(list);
+    } else {
+      card.appendChild(el("p", "room-empty", "Nobody allocated yet"));
+    }
+
+    var pct = room.capacity
+      ? Math.min(100, Math.round(room.occupied / room.capacity * 100)) : 0;
+    var bar = el("div", "room-bar");
+    var fill = el("div", "room-bar-fill");
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+    card.appendChild(bar);
+
+    var foot = el("div", "room-foot");
+    foot.appendChild(el("span", "room-count",
+      room.occupied + " / " + room.capacity + " occupied"));
+    var badge;
+    if (room.over) {
+      badge = el("span", "room-badge badge-over",
+        (room.occupied - room.capacity) + " over capacity");
+    } else if (room.full) {
+      badge = el("span", "room-badge badge-full", "FULL");
+    } else {
+      badge = el("span", "room-badge badge-space",
+        room.free + (room.free === 1 ? " space available" : " spaces available"));
+    }
+    foot.appendChild(badge);
+    card.appendChild(foot);
+    return card;
+  }
+
+  /* ------------------------------------------- unallocated party rows */
+  function allocationRow(party, rooms) {
+    var card = el("article", "alloc-card " + catClassFor(party));
+
+    var head = el("div", "alloc-head");
+    head.appendChild(el("h4", "alloc-name", party.name));
+    head.appendChild(el("span", "alloc-people",
+      party.people + (party.people === 1 ? " person" : " people")));
+    card.appendChild(head);
+
+    card.appendChild(el("span", "cat-saved", categoryText({ category: party.category })));
+
+    if (party.placements.length) {
+      var placed = el("ul", "alloc-placed");
+      party.placements.forEach(function (pl) {
+        placed.appendChild(el("li", null,
+          pl.room_name + " — " + pl.people));
+      });
+      card.appendChild(placed);
+      card.appendChild(el("p", "alloc-remaining",
+        party.remaining > 0
+          ? party.remaining + " still to place"
+          : "Fully allocated"));
+    }
+
+    if (party.state === "no_room_required") {
+      var undo = el("button", "btn btn-ghost btn-small", "Needs a room after all");
+      undo.type = "button";
+      undo.addEventListener("click", function () {
+        post("/api/room-status", { party_key: party.party_key, status: "" })
+          .then(function (body) {
+            state.data.rooms = body.rooms;
+            renderRooms();
+          }).catch(function (err) { toast(err.message, true); });
+      });
+      card.appendChild(undo);
+      return card;
+    }
+
+    if (party.remaining > 0 && rooms.length) {
+      var form = el("div", "alloc-form");
+      var roomSel = el("select");
+      roomSel.setAttribute("aria-label", "Room for " + party.name);
+      rooms.forEach(function (r) {
+        var free = r.capacity - r.occupied;
+        var opt = el("option", null,
+          r.name + " (" + (free > 0 ? free + " free" : "full") + ")");
+        opt.value = String(r.id);
+        roomSel.appendChild(opt);
+      });
+      var count = el("input");
+      count.type = "number";
+      count.min = "1";
+      count.max = String(party.remaining);
+      count.value = String(party.remaining);
+      count.inputMode = "numeric";
+      count.setAttribute("aria-label", "People from " + party.name);
+
+      var go = el("button", "btn btn-primary btn-small", "Assign");
+      go.type = "button";
+      go.addEventListener("click", function () {
+        var payload = {
+          party_key: party.party_key,
+          room_id: parseInt(roomSel.value, 10),
+          people: parseInt(count.value, 10) || 0
+        };
+        go.disabled = true;
+        post("/api/allocate", payload).then(function (body) {
+          state.data.rooms = body.rooms;
+          toast(party.name + " allocated.");
+          renderRooms();
+        }).catch(function (err) {
+          go.disabled = false;
+          if (err.needsOverride &&
+              window.confirm(err.message + "\n\nAllocate anyway?")) {
+            payload.allow_overflow = true;
+            post("/api/allocate", payload).then(function (body) {
+              state.data.rooms = body.rooms;
+              toast(party.name + " allocated, room now over capacity.");
+              renderRooms();
+            }).catch(function (e2) { toast(e2.message, true); });
+          } else {
+            toast(err.message, true);
+          }
+        });
+      });
+
+      form.appendChild(roomSel);
+      form.appendChild(count);
+      form.appendChild(go);
+      card.appendChild(form);
+    } else if (party.remaining > 0) {
+      card.appendChild(el("p", "alloc-remaining", "Add a room first."));
+    }
+
+    var none = el("button", "btn btn-ghost btn-small", "No room required");
+    none.type = "button";
+    none.addEventListener("click", function () {
+      post("/api/room-status", { party_key: party.party_key,
+                                 status: "no_room_required" })
+        .then(function (body) {
+          state.data.rooms = body.rooms;
+          renderRooms();
+        }).catch(function (err) { toast(err.message, true); });
+    });
+    card.appendChild(none);
+    return card;
+  }
+
+  /* ---------------------------------------------------------- filters */
+  function roomFilterBar() {
+    var bar = el("div", "room-filters");
+
+    var search = el("input", "room-search");
+    search.type = "search";
+    search.placeholder = "Search party name…";
+    search.value = state.roomQuery;
+    search.setAttribute("aria-label", "Search parties");
+    search.addEventListener("input", function () {
+      state.roomQuery = search.value;
+      clearTimeout(roomFilterBar._t);
+      roomFilterBar._t = setTimeout(function () {
+        renderRooms({ keepFocus: "search" });
+      }, 160);
+    });
+    bar.appendChild(search);
+
+    var row = el("div", "chip-row");
+    function chip(label, field, value, cls) {
+      var active = state.roomFilter[field] === value;
+      var b = el("button", "count-chip" + (active ? " is-active" : "") +
+                            (cls ? " " + cls : ""));
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(active));
+      b.appendChild(el("span", "count-chip-label", label));
+      b.addEventListener("click", function () {
+        state.roomFilter = { category: "", friendOf: "", location: "" };
+        if (!active) state.roomFilter[field] = value;
+        renderRooms();
+      });
+      return b;
+    }
+    row.appendChild(chip("All", "category", "", ""));
+    row.appendChild(chip("Family", "category", "Family", "is-family"));
+    row.appendChild(chip("Friends", "category", "Friend", "is-friends"));
+    row.appendChild(chip("Musicians", "category", "Musician", "is-musicians"));
+    row.appendChild(chip("Other", "category", "Other", "is-other"));
+    row.appendChild(chip("Uncategorised", "category", "__none__", "is-none"));
+    bar.appendChild(row);
+
+    // sub-filters only where they mean something
+    if (state.roomFilter.category === "Friend") {
+      var who = el("div", "chip-row is-friends");
+      state.data.vocab.friend_of.forEach(function (n) {
+        who.appendChild(chip(n, "friendOf", n, "is-friends"));
+      });
+      state.data.vocab.friend_locations.forEach(function (n) {
+        who.appendChild(chip(n, "location", n, "is-friends"));
+      });
+      bar.appendChild(who);
+    } else if (state.roomFilter.category === "Family") {
+      var fam = el("div", "chip-row is-family");
+      state.data.vocab.family_locations.forEach(function (n) {
+        fam.appendChild(chip(n, "location", n, "is-family"));
+      });
+      bar.appendChild(fam);
+    }
+    return bar;
+  }
+
+  function roomFilterMatches(party) {
+    var f = state.roomFilter;
+    var cat = party.category || {};
+    if (f.category === "__none__") { if (cat.category) return false; }
+    else if (f.category && cat.category !== f.category) return false;
+    if (f.friendOf && cat.friend_of !== f.friendOf) return false;
+    if (f.location &&
+        cat.friend_location !== f.location && cat.family_location !== f.location) {
+      return false;
+    }
+    var q = state.roomQuery.trim().toLowerCase();
+    return !q || party.name.toLowerCase().indexOf(q) !== -1;
+  }
+
+  /* ------------------------------------------------------------ render */
+  function renderRooms(opts) {
+    var data = roomsData();
+    els.rooms.textContent = "";
+    els.rooms.appendChild(roomSummaryStrip());
+    els.rooms.appendChild(managePanel());
+
+    var section = function (title, note) {
+      var h = el("div", "rsection");
+      h.appendChild(el("h3", "rsection-title", title));
+      if (note) h.appendChild(el("p", "rsection-note", note));
+      return h;
+    };
+
+    // rooms
+    els.rooms.appendChild(section("Room cards",
+      data.rooms.length ? null : "No rooms yet — add them under Manage rooms."));
+    if (data.rooms.length) {
+      var grid = el("div", "room-grid");
+      data.rooms.forEach(function (r) { grid.appendChild(roomCard(r)); });
+      els.rooms.appendChild(grid);
+    }
+
+    els.rooms.appendChild(roomFilterBar());
+
+    var visible = data.parties.filter(roomFilterMatches);
+    var groups = [
+      ["Needs room / not allocated", ["not_decided", "partly_allocated"]],
+      ["Allocated", ["allocated"]],
+      ["No room required", ["no_room_required"]]
+    ];
+    groups.forEach(function (g) {
+      var members = visible.filter(function (p) {
+        return g[1].indexOf(p.state) !== -1;
+      });
+      var people = members.reduce(function (n, p) { return n + p.people; }, 0);
+      els.rooms.appendChild(section(g[0],
+        members.length + (members.length === 1 ? " party" : " parties") +
+        " · " + people + (people === 1 ? " person" : " people")));
+      if (!members.length) {
+        els.rooms.appendChild(el("p", "bucket-empty", "Nothing here."));
+        return;
+      }
+      var wrap = el("div", "alloc-grid");
+      members.forEach(function (p) {
+        wrap.appendChild(allocationRow(p, data.rooms));
+      });
+      els.rooms.appendChild(wrap);
+    });
+
+    if (opts && opts.keepFocus === "search") {
+      var box = els.rooms.querySelector(".room-search");
+      if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+    }
   }
 
   // ------------------------------------------------------------- events

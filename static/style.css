@@ -1239,3 +1239,336 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   .tab, .logout, .clear-btn { transition: background .15s ease, border-color .15s ease, color .15s ease; }
 }
+
+/* ==================================================== room allocation */
+.rooms { margin-bottom: 26px; }
+
+.rstats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.rstat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--slate);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+
+.rstat-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.rstat-value { display: block; font-size: 26px; font-weight: 700; line-height: 1.15; }
+.rstat-req { border-top-color: var(--navy); }
+.rstat-ok { border-top-color: var(--green); }
+.rstat-ok .rstat-value { color: var(--green); }
+.rstat-warn { border-top-color: var(--amber); }
+.rstat-warn .rstat-value { color: #8a5a00; }
+
+/* manage rooms */
+.manage {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin-bottom: 22px;
+}
+
+.manage-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.manage-title { margin: 0; font-size: 15px; color: var(--navy); }
+.manage-sub { margin: 0; font-size: 12.5px; color: var(--slate); flex: 1; }
+
+.room-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.room-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.room-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.room-field input {
+  font-family: inherit;
+  font-size: 16px;
+  padding: 9px 11px;
+  min-height: 40px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.room-form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-danger { background: var(--red-tint); color: var(--red); border-color: #eccec9; }
+.btn-danger:hover { background: #f7ded9; }
+
+.manage-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+
+.manage-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.manage-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.manage-row-meta { font-size: 12.5px; color: var(--slate); }
+.manage-row-notes { font-size: 12px; color: var(--slate); font-style: italic; }
+.manage-row-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.manage-edit { width: 100%; }
+
+/* section headings */
+.rsection { margin: 24px 0 12px; }
+.rsection-title { margin: 0; font-size: 15px; color: var(--navy); }
+.rsection-note { margin: 3px 0 0; font-size: 12.5px; color: var(--slate); }
+
+/* room cards */
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 12px;
+}
+
+.room-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--green);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-card.is-full { border-top-color: var(--amber); }
+.room-card.is-over { border-top-color: var(--red); }
+
+.room-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.room-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.room-cap { font-size: 12px; color: var(--slate); font-weight: 600; white-space: nowrap; }
+.room-meta { margin: 3px 0 0; font-size: 12px; color: var(--slate); }
+
+.room-occupants { list-style: none; margin: 11px 0 0; padding: 0; display: grid; gap: 5px; }
+
+.room-occupant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--cat-tint, var(--page));
+  border: 1px solid var(--cat-line, var(--line));
+}
+
+.occ-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cat-strong, var(--slate));
+  flex: none;
+}
+
+.occ-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--cat-ink, var(--ink));
+  font-weight: 600;
+}
+
+.occ-people { font-weight: 700; color: var(--cat-ink, var(--ink)); }
+
+.occ-remove {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--slate);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.occ-remove:hover { background: rgba(0, 0, 0, .07); color: var(--red); }
+.room-empty { margin: 11px 0 0; font-size: 12.5px; color: #9aa5b4; font-style: italic; }
+
+.room-bar {
+  height: 6px;
+  margin: 12px 0 8px;
+  border-radius: 999px;
+  background: var(--page);
+  overflow: hidden;
+}
+
+.room-bar-fill { height: 100%; background: var(--green); }
+.is-full .room-bar-fill { background: var(--amber); }
+.is-over .room-bar-fill { background: var(--red); }
+
+.room-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.room-count { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+
+.room-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.badge-full { background: var(--amber-tint); color: #8a5a00; }
+.badge-over { background: var(--red-tint); color: var(--red); }
+.badge-space { background: var(--green-tint); color: var(--green); }
+
+/* filters */
+.room-filters { margin: 20px 0 6px; display: grid; gap: 10px; }
+
+.room-search {
+  width: 100%;
+  font-family: inherit;
+  font-size: 16px;
+  padding: 10px 13px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* allocation cards */
+.alloc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 11px;
+}
+
+.alloc-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cat-strong, var(--line));
+  border-radius: 8px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.alloc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.alloc-name {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alloc-people { font-size: 12.5px; font-weight: 700; color: var(--green); white-space: nowrap; }
+
+.alloc-placed { list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: var(--slate); }
+.alloc-placed li { padding: 1px 0; }
+.alloc-remaining { margin: 0; font-size: 12.5px; font-weight: 600; color: #8a5a00; }
+
+.alloc-form { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; }
+
+.alloc-form select {
+  flex: 1 1 130px;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 8px 9px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.alloc-form input {
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 16px;
+  padding: 8px 9px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.alloc-form .btn { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  /* the whole allocation tab collapses to one column on a phone */
+  .rstats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .rstat-value { font-size: 22px; }
+  .room-grid, .alloc-grid { grid-template-columns: 1fr; }
+  .room-form { grid-template-columns: 1fr; }
+  .room-form-actions .btn { width: 100%; }
+  .manage-row { flex-direction: column; align-items: stretch; }
+  .manage-row-actions .btn { flex: 1; }
+  .alloc-form { flex-direction: column; }
+  .alloc-form select,
+  .alloc-form input,
+  .alloc-form .btn { width: 100%; flex: none; }
+  .alloc-card > .btn { width: 100%; }
+}
