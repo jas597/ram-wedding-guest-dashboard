@@ -140,6 +140,7 @@ def api_data():
             "friend_locations": store.FRIEND_LOCATIONS,
             "family_locations": store.FAMILY_LOCATIONS,
         },
+        "rooms": room_view(parties),
         "data_quality_notes": [
             {"subject": subject, "note": note}
             for subject, note in duplicates.DATA_QUALITY_NOTES
@@ -307,6 +308,266 @@ def api_revert():
         "still_attending": still_attending,
         "category_removed": category_removed,
     })
+
+
+# ------------------------------------------------------------- rooms
+def room_view(parties):
+    """Rooms, allocations and the headline figures, all derived on read.
+
+    Occupancy is never stored: it is the sum of a room's allocation rows, so
+    it cannot drift from the allocations themselves.
+    """
+    rooms = store.load_rooms()
+    allocations = store.load_allocations()
+    statuses = store.load_room_statuses()
+
+    attending = {p["party_key"]: p for p in parties if p["attending_people"] > 0}
+
+    by_room = {}
+    by_party = {}
+    for a in allocations:
+        # an allocation whose party is no longer attending is ignored in the
+        # figures but still returned, so it can be seen and cleared
+        by_room.setdefault(a["room_id"], []).append(a)
+        by_party.setdefault(a["party_key"], []).append(a)
+
+    room_cards = []
+    available_capacity = 0
+    for r in rooms:
+        placed = by_room.get(r["id"], [])
+        occupied = sum(a["people"] for a in placed)
+        free = r["capacity"] - occupied
+        available_capacity += max(free, 0)
+        room_cards.append(dict(r, **{
+            "occupied": occupied,
+            "free": free,
+            "over": free < 0,
+            "full": free == 0,
+            "occupants": [{
+                "party_key": a["party_key"],
+                "name": (attending.get(a["party_key"]) or {}).get("name")
+                        or "(no longer attending)",
+                "people": a["people"],
+                "category": (attending.get(a["party_key"]) or {}).get("category"),
+                "orphaned": a["party_key"] not in attending,
+            } for a in sorted(placed, key=lambda x: x["party_key"])],
+        }))
+
+    party_rows = []
+    allocated_people = 0
+    required_people = 0
+    for key, party in attending.items():
+        placed = by_party.get(key, [])
+        placed_people = sum(a["people"] for a in placed)
+        allocated_people += placed_people
+        flag = statuses.get(key)
+        if flag != store.NO_ROOM_REQUIRED:
+            required_people += party["attending_people"]
+
+        if flag == store.NO_ROOM_REQUIRED:
+            state = "no_room_required"
+        elif placed_people >= party["attending_people"]:
+            state = "allocated"
+        elif placed_people > 0:
+            state = "partly_allocated"
+        else:
+            state = "not_decided"
+
+        party_rows.append({
+            "party_key": key,
+            "name": party["name"],
+            "people": party["attending_people"],
+            "category": party["category"],
+            "is_group": party["is_group"],
+            "member_count": party["member_count"],
+            "allocated": placed_people,
+            "remaining": party["attending_people"] - placed_people,
+            "state": state,
+            "placements": [{
+                "room_id": a["room_id"],
+                "room_name": next((r["name"] for r in rooms
+                                   if r["id"] == a["room_id"]), "?"),
+                "people": a["people"],
+            } for a in placed],
+        })
+
+    party_rows.sort(key=lambda p: p["name"].lower())
+
+    return {
+        "rooms": room_cards,
+        "parties": party_rows,
+        "summary": {
+            "attending_people": sum(p["attending_people"] for p in attending.values()),
+            "required_people": required_people,
+            "allocated_people": allocated_people,
+            "unallocated_people": max(required_people - allocated_people, 0),
+            "rooms_total": len(rooms),
+            "rooms_used": sum(1 for r in room_cards if r["occupied"] > 0),
+            "total_capacity": sum(r["capacity"] for r in rooms),
+            "available_capacity": available_capacity,
+            "no_room_required_parties": sum(
+                1 for p in party_rows if p["state"] == "no_room_required"),
+            "not_decided_parties": sum(
+                1 for p in party_rows if p["state"] == "not_decided"),
+        },
+    }
+
+
+def _attending_party(parties, party_key):
+    """Only attending parties may be allocated -- this is what keeps Regrets
+    and Pending guests out of rooms."""
+    party = _find_party(parties, party_key)
+    if not party:
+        return None, (jsonify(error="Unknown party."), 404)
+    if party["attending_people"] <= 0:
+        return None, (jsonify(
+            error="%s is not attending, so cannot be given a room." % party["name"]), 409)
+    return party, None
+
+
+@app.route("/api/rooms", methods=["POST"])
+@login_required
+def api_room_save():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify(error="A room needs a name."), 400
+    try:
+        capacity = int(body.get("capacity"))
+    except (TypeError, ValueError):
+        return jsonify(error="Capacity must be a whole number."), 400
+    if capacity < 1:
+        return jsonify(error="Capacity must be at least 1."), 400
+
+    room_id = body.get("id")
+    if room_id is not None:
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return jsonify(error="Bad room id."), 400
+        # shrinking below what is already placed would hide an overflow
+        current = room_view(current_data()[0])
+        existing = next((r for r in current["rooms"] if r["id"] == room_id), None)
+        if existing and capacity < existing["occupied"] and not body.get("allow_overflow"):
+            return jsonify(
+                error="%s already has %d people in it. Setting capacity to %d would "
+                      "leave it over capacity."
+                      % (existing["name"], existing["occupied"], capacity),
+                needs_override=True), 409
+
+    try:
+        new_id = store.save_room({
+            "name": name, "capacity": capacity,
+            "property": body.get("property"), "room_type": body.get("room_type"),
+            "notes": body.get("notes"),
+        }, room_id=room_id)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 409
+
+    parties, _ = current_data()
+    return jsonify({"ok": True, "room_id": new_id, "rooms": room_view(parties)})
+
+
+@app.route("/api/rooms/delete", methods=["POST"])
+@login_required
+def api_room_delete():
+    body = request.get_json(silent=True) or {}
+    try:
+        room_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify(error="Bad room id."), 400
+    result = store.delete_room(room_id)
+    if not result.get("deleted"):
+        return jsonify(error="Unknown room."), 404
+    parties, _ = current_data()
+    return jsonify({"ok": True, "freed_allocations": result["freed_allocations"],
+                    "rooms": room_view(parties)})
+
+
+@app.route("/api/allocate", methods=["POST"])
+@login_required
+def api_allocate():
+    """Place some of a party's people in a room.
+
+    Two invariants are enforced here, and they are what stop a guest being
+    counted twice:
+
+    * a party's people across all rooms may never exceed its attending
+      headcount, and
+    * a room may not exceed its capacity without an explicit override.
+    """
+    body = request.get_json(silent=True) or {}
+    party_key = (body.get("party_key") or "").strip()
+    parties, _ = current_data()
+    party, failure = _attending_party(parties, party_key)
+    if failure:
+        return failure
+
+    try:
+        room_id = int(body.get("room_id"))
+        people = int(body.get("people"))
+    except (TypeError, ValueError):
+        return jsonify(error="Room and number of people are both required."), 400
+    if people < 0:
+        return jsonify(error="Number of people cannot be negative."), 400
+
+    view = room_view(parties)
+    target = next((r for r in view["rooms"] if r["id"] == room_id), None)
+    if not target:
+        return jsonify(error="Unknown room."), 404
+
+    row = next((p for p in view["parties"] if p["party_key"] == party_key), None)
+    already_here = next((pl["people"] for pl in row["placements"]
+                         if pl["room_id"] == room_id), 0)
+    elsewhere = row["allocated"] - already_here
+
+    if elsewhere + people > party["attending_people"]:
+        return jsonify(
+            error="%s has %d people attending and %d already placed in other rooms, "
+                  "so at most %d can go here."
+                  % (party["name"], party["attending_people"], elsewhere,
+                     party["attending_people"] - elsewhere)), 409
+
+    room_after = target["occupied"] - already_here + people
+    if room_after > target["capacity"] and not body.get("allow_overflow"):
+        return jsonify(
+            error="%s holds %d and would end up with %d."
+                  % (target["name"], target["capacity"], room_after),
+            needs_override=True,
+            capacity=target["capacity"], would_be=room_after), 409
+
+    store.set_allocation(room_id, party_key, people, party["name"], target["name"])
+    parties, summary = current_data()
+    return jsonify({"ok": True, "rooms": room_view(parties), "summary": summary})
+
+
+@app.route("/api/room-status", methods=["POST"])
+@login_required
+def api_room_status():
+    """Mark a party as needing no room, or put it back to not decided."""
+    body = request.get_json(silent=True) or {}
+    party_key = (body.get("party_key") or "").strip()
+    parties, _ = current_data()
+    party, failure = _attending_party(parties, party_key)
+    if failure:
+        return failure
+
+    wanted = body.get("status")
+    if wanted not in (None, "", store.NO_ROOM_REQUIRED):
+        return jsonify(error="Unknown room status %r." % wanted), 400
+    wanted = wanted or None
+
+    if wanted == store.NO_ROOM_REQUIRED:
+        view = room_view(parties)
+        row = next((p for p in view["parties"] if p["party_key"] == party_key), None)
+        if row and row["allocated"] > 0:
+            return jsonify(
+                error="%s already has %d people in rooms. Remove those "
+                      "allocations first." % (party["name"], row["allocated"])), 409
+
+    store.set_room_status(party_key, wanted, party["name"])
+    parties, summary = current_data()
+    return jsonify({"ok": True, "rooms": room_view(parties), "summary": summary})
 
 
 @app.route("/api/history")

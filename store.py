@@ -23,8 +23,9 @@ import json
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import (Column, DateTime, Integer, MetaData, String, Table,
-                        Text, create_engine, delete, insert, select, update)
+from sqlalchemy import (Column, DateTime, ForeignKey, Integer, MetaData,
+                        String, Table, Text, UniqueConstraint, create_engine,
+                        delete, insert, select, update)
 
 # --------------------------------------------------------------- vocabularies
 CATEGORIES = ["Musician", "Family", "Friend", "Other"]
@@ -89,6 +90,49 @@ change_log = Table(
     Column("changed_by", String(64), nullable=False),
     Column("changed_at", DateTime(timezone=True), nullable=False),
 )
+
+# --------------------------------------------------------------- rooms
+# Accommodation lives entirely in its own tables. Nothing here writes to
+# party_category or guest_status_override, so allocating a room can never
+# change a guest's category or RSVP status.
+room = Table(
+    "room", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String(120), nullable=False, unique=True),
+    Column("property", String(120)),
+    Column("room_type", String(80)),
+    Column("capacity", Integer, nullable=False),
+    Column("notes", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+# One row per (room, party). A party split across rooms simply has several
+# rows -- 64 of the 105 attending parties carry their whole headcount in a
+# single CSV row, so their people have no individual identity and a split can
+# only ever be expressed as a count, never as a list of members.
+room_allocation = Table(
+    "room_allocation", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("room_id", Integer, ForeignKey("room.id", ondelete="CASCADE"),
+           nullable=False),
+    Column("party_key", String(64), nullable=False),
+    Column("people", Integer, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("room_id", "party_key", name="uq_room_party"),
+)
+
+# Only ever holds NO_ROOM_REQUIRED. A party with no row here and no
+# allocations is "not decided".
+NO_ROOM_REQUIRED = "no_room_required"
+
+party_room_status = Table(
+    "party_room_status", metadata,
+    Column("party_key", String(64), primary_key=True),
+    Column("status", String(32), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 _engine = None
 
@@ -323,3 +367,161 @@ def revert_record(record_key, subject):
              {"status": existing["status"], "people": existing["total_attending"]},
              {"status": "(reverted to source CSV)"}, when)
     return {"reverted": True, "changed_at": _iso(when)}
+
+
+# ------------------------------------------------------------ room reads
+def load_rooms():
+    stmt = select(room).order_by(room.c.name.asc())
+    with engine().connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [{
+        "id": r["id"],
+        "name": r["name"],
+        "property": r["property"] or "",
+        "room_type": r["room_type"] or "",
+        "capacity": r["capacity"],
+        "notes": r["notes"] or "",
+    } for r in rows]
+
+
+def load_allocations():
+    stmt = select(room_allocation)
+    with engine().connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [{
+        "id": r["id"],
+        "room_id": r["room_id"],
+        "party_key": r["party_key"],
+        "people": r["people"],
+        "updated_at": _iso(r["updated_at"]),
+    } for r in rows]
+
+
+def load_room_statuses():
+    with engine().connect() as conn:
+        rows = conn.execute(select(party_room_status)).mappings().all()
+    return {r["party_key"]: r["status"] for r in rows}
+
+
+# ----------------------------------------------------------- room writes
+def save_room(values, room_id=None):
+    """Create or update one room. Returns the room id."""
+    when = _now()
+    payload = {
+        "name": values["name"].strip(),
+        "property": (values.get("property") or "").strip() or None,
+        "room_type": (values.get("room_type") or "").strip() or None,
+        "capacity": int(values["capacity"]),
+        "notes": (values.get("notes") or "").strip() or None,
+    }
+    with engine().begin() as conn:
+        clash = conn.execute(
+            select(room.c.id).where(room.c.name == payload["name"])
+        ).first()
+        if clash and (room_id is None or clash[0] != room_id):
+            raise ValueError("A room called %r already exists." % payload["name"])
+
+        if room_id is None:
+            result = conn.execute(insert(room).values(
+                created_at=when, updated_at=when, **payload))
+            new_id = result.inserted_primary_key[0]
+            _log(conn, "room", str(new_id), payload["name"], None, payload, when)
+            return new_id
+
+        before = conn.execute(
+            select(room).where(room.c.id == room_id)).mappings().first()
+        if not before:
+            raise ValueError("Unknown room.")
+        conn.execute(update(room).where(room.c.id == room_id)
+                     .values(updated_at=when, **payload))
+        _log(conn, "room", str(room_id), payload["name"],
+             {k: before[k] for k in payload}, payload, when)
+        return room_id
+
+
+def delete_room(room_id):
+    """Remove a room. Its allocations go with it -- callers warn first."""
+    when = _now()
+    with engine().begin() as conn:
+        before = conn.execute(
+            select(room).where(room.c.id == room_id)).mappings().first()
+        if not before:
+            return {"deleted": False}
+        freed = conn.execute(
+            select(room_allocation)
+            .where(room_allocation.c.room_id == room_id)).mappings().all()
+        conn.execute(delete(room_allocation)
+                     .where(room_allocation.c.room_id == room_id))
+        conn.execute(delete(room).where(room.c.id == room_id))
+        _log(conn, "room", str(room_id), before["name"],
+             {"name": before["name"], "capacity": before["capacity"],
+              "allocations": len(freed)},
+             {"deleted": True}, when)
+    return {"deleted": True, "freed_allocations": len(freed)}
+
+
+def set_allocation(room_id, party_key, people, subject, room_name):
+    """Place `people` of a party in a room, or remove them when people is 0."""
+    when = _now()
+    with engine().begin() as conn:
+        before = conn.execute(
+            select(room_allocation).where(
+                room_allocation.c.room_id == room_id,
+                room_allocation.c.party_key == party_key)).mappings().first()
+
+        if people <= 0:
+            if not before:
+                return {"changed": False}
+            conn.execute(delete(room_allocation).where(
+                room_allocation.c.id == before["id"]))
+            _log(conn, "allocation", party_key, subject,
+                 {"room": room_name, "people": before["people"]},
+                 {"room": None, "people": 0}, when)
+            return {"changed": True, "removed": True}
+
+        if before:
+            conn.execute(update(room_allocation)
+                         .where(room_allocation.c.id == before["id"])
+                         .values(people=people, updated_at=when))
+        else:
+            conn.execute(insert(room_allocation).values(
+                room_id=room_id, party_key=party_key,
+                people=people, updated_at=when))
+
+        # An explicit allocation retires any "no room required" flag.
+        conn.execute(delete(party_room_status)
+                     .where(party_room_status.c.party_key == party_key))
+
+        _log(conn, "allocation", party_key, subject,
+             {"room": room_name if before else None,
+              "people": before["people"] if before else 0},
+             {"room": room_name, "people": people}, when)
+    return {"changed": True}
+
+
+def set_room_status(party_key, status, subject):
+    """Flag a party as needing no room, or clear the flag."""
+    when = _now()
+    with engine().begin() as conn:
+        before = conn.execute(
+            select(party_room_status)
+            .where(party_room_status.c.party_key == party_key)).mappings().first()
+        previous = before["status"] if before else None
+
+        if status == previous:
+            return {"changed": False}
+
+        if status is None:
+            conn.execute(delete(party_room_status)
+                         .where(party_room_status.c.party_key == party_key))
+        elif before:
+            conn.execute(update(party_room_status)
+                         .where(party_room_status.c.party_key == party_key)
+                         .values(status=status, updated_at=when))
+        else:
+            conn.execute(insert(party_room_status).values(
+                party_key=party_key, status=status, updated_at=when))
+
+        _log(conn, "allocation", party_key, subject,
+             {"room_status": previous}, {"room_status": status}, when)
+    return {"changed": True}

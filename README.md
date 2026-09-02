@@ -264,6 +264,52 @@ reversal leaves nobody in that party attending; otherwise removing it would
 strip the category from members who never moved. The reversal is written to
 `change_log` like any other change.
 
+## Room allocation
+
+A separate **Room Allocation** tab, keyed off the same `party_key` as the
+categories. It writes only to its own tables, so allocating a room can never
+change a category or an RSVP status.
+
+### Tables
+
+| Table | Holds |
+|---|---|
+| `room` | name (unique), property, type, capacity, notes |
+| `room_allocation` | one row per (room, party) with a headcount; `UNIQUE(room_id, party_key)` |
+| `party_room_status` | the "no room required" flag, nothing else |
+
+`change_log` gains `room` and `allocation` kinds, so allocation history reads
+from the same audit trail as everything else.
+
+### Allocating by headcount, not by member
+
+64 of the 105 attending parties carry their whole headcount in a *single* CSV
+row -- Arasu Sengodan is 4 people in 1 row -- so those people have no individual
+records and a party **cannot** be split by member. Allocation is therefore a
+count: `(room, party, people)`. Splitting a party across rooms is simply more
+than one such row, and the 20 multi-row parties work identically.
+
+### What cannot go wrong
+
+* A party's people across all rooms may never exceed its attending headcount,
+  which is what stops one guest being placed in two rooms.
+* `UNIQUE(room_id, party_key)` means re-assigning within a room updates rather
+  than duplicates.
+* Only parties with `attending_people > 0` are allocatable, so Regrets and
+  Pending guests are refused outright and never appear in the lists.
+* Exceeding a room's capacity, or shrinking a room below what it already holds,
+  is refused unless the request carries an explicit override; the UI only sends
+  it after you confirm a warning, and such rooms show an over-capacity badge.
+
+### Three states, no assumptions
+
+Every attending party is **Allocated**, **No Room Required**, or **Not
+Decided** (the default). Nothing assumes all 242 need a bed -- "Room required"
+counts only parties that are not excused, so it drops as you mark local guests.
+
+Occupancy is always derived from the allocation rows, never stored, so it cannot
+drift. Available capacity sums only rooms that are not already over.
+
 ### Endpoints
 
 | Route | Method | Purpose |
@@ -272,6 +318,10 @@ strip the category from members who never moved. The reversal is written to
 | `/api/move` | POST | Move specific records to Attending |
 | `/api/revert` | POST | Drop an override, restoring the CSV status |
 | `/api/history` | GET | Audit trail, newest first |
+| `/api/rooms` | POST | Create or update a room |
+| `/api/rooms/delete` | POST | Delete a room, releasing its allocations |
+| `/api/allocate` | POST | Place N of a party in a room (0 removes) |
+| `/api/room-status` | POST | Mark a party as needing no room, or clear it |
 
 ### Confirmed vs estimated
 
@@ -297,6 +347,15 @@ by headcount, the mixed-status guard, headcount arithmetic in both directions,
 the audit trail (original vs previous vs new, `changed_by`, timestamp),
 persistence across a restart, revert, and auth on every new endpoint. Uses a
 throwaway SQLite file; your real database is untouched.
+
+```bash
+python test_rooms.py
+```
+
+Covers room CRUD and its guards, allocation by headcount, splitting a party
+across rooms, the double-booking and capacity refusals, Regrets/Pending being
+unallocatable, No Room Required, categories and RSVP surviving allocation
+untouched, the audit trail and persistence across a restart.
 
 ```bash
 python test_workers.py
